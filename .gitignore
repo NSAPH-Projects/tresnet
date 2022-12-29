@@ -1,5 +1,8 @@
+
+# Local ignores for Dimeji
 *.ipynb
 .DS_store
+simu1/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
