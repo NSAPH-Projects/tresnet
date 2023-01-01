@@ -58,6 +58,9 @@ for idx, item in enumerate(train_loader):
     if is_target_reg:
         # optimizer.zero_grad()
         out = model.forward(t, x)
+
+        print("The conditional estimator works")
+        raise
         # TODO: remove the raise from here
         trg = TargetReg(t)
         loss = criterion(out, y, alpha=alpha) + criterion_TR(out, trg, y, beta=beta)
