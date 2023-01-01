@@ -30,17 +30,6 @@ class Encoder(nn.Module):
             layers.append(nn.ReLU(inplace=True))
 
         self.encoder = nn.Sequential(*layers)
-        """
-
-        if model_name == 'Vcnet' or model_name == 'Vcnet_tr':
-            cfg_density = [(6, 50, 1, 'relu'), (50, 50, 1, 'relu')]
-            num_grid = 10
-            cfg = [(50, 50, 1, 'relu'), (50, 1, 1, 'id')]
-            degree = 2
-            knots = [0.33, 0.66]
-            model = Vcnet(cfg_density, num_grid, cfg, degree, knots)
-            model._initialize_weights()
-        """
 
     def forward(self, covariates):
         """_summary_
