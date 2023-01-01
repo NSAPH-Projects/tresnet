@@ -171,5 +171,5 @@ def get_linear_interpolation_params(treatment, num_grid):
     return (
         lower_grid_idx.int().tolist(),
         upper_grid_idx.int().tolist(),
-        distance_to_lower,
+        distance_to_lower_grid,
     )
