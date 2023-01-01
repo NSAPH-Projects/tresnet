@@ -2,8 +2,30 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 
+class Batch:
+    """Create a batch that goes into the training pipeline"""
+
+    treatment = None
+    outcome = None
+    covariates = None
+
+    def get_batch(self, attr: dict):
+        """_summary_
+
+        Args:
+            attr (dict): Dictionary containing "treatment", "outcome", and "covariates" as key.
+
+        Returns:
+            Batch: returns a Batch object with all needed attributes assigned
+        """
+
+        self.treatment = attr["treatment"]
+        self.outcome = attr["outcome"]
+        self.covariates = attr["covariates"]
+
+
 class DatasetFromMatrix(Dataset):
-    """Face Landmarks dataset."""
+    """Create the pyTorch Dataset object that groes into the dataloader."""
 
     def __init__(self, data_matrix):
         """
@@ -21,7 +43,13 @@ class DatasetFromMatrix(Dataset):
             idx = idx.tolist()
         sample = self.data_matrix[idx, :]
 
-        return {"covariates": sample[0:-1], "treatment": sample[-1]}
+        batch = Batch()
+
+        return {
+            "treatment": sample[0],
+            "covariates": sample[1:-1],
+            "outcome": sample[-1],
+        }
 
 
 def get_iter(data_matrix, batch_size, shuffle=True):
