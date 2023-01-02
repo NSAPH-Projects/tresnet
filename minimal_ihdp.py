@@ -15,9 +15,14 @@ def make_treatment(x: Tensor, noise: Tensor) -> Tensor:
     C0 = x1 / (1.0 + x2)
     C1 = pmax(x3, x5, x6) / (0.2 + pmin(x3, x5, x6))
     C2 = (5.0 * xcate2).tanh()
-    t = (2.0 * (C0 + C1 + C2) - 4.0 + noise).sigmoid()
+    Z = (torch.rand_like(noise) < 0.75).float()
+    U = (-Z + 0.5 * xcate2).sigmoid()
+    # t = (2.0 * (C0 + C1 + C2) - 4.0 + noise).sigmoid()
+    # nex 3 lines are new
+    U = U / U.max()
+    t = (0.1 + 0.8*(2.0 * (C0 + C1 + C2) - 4.0 + noise)).sigmoid() * U
+    t = t / t.max()
     return t
-
 
 def make_outcome(x: Tensor, t: Tensor, noise: Tensor) -> Tensor:
     """outcome as in VCNet paper"""
@@ -39,7 +44,7 @@ def pmin(*args: Tensor) -> Tensor:
     return stack(args, 1).amin(1)
 
 
-class ExposureShiftCIHDP(pl.LightningDataModule):
+class IHDP_C(pl.LightningDataModule):
     """Variant of the IHDP dataset for evaluating counterfactual
     inference under distributional shifts of a continuous exposure.
     The construction of the treatment and outcome follows VCNet"""
@@ -48,12 +53,15 @@ class ExposureShiftCIHDP(pl.LightningDataModule):
         self,
         ihdp_path: str,
         dlist: list[float],
+        tlist: list[float],
         batch_size: int = 32,
         num_workers: int = 0,
+        noise_size: float = 0.25,
     ) -> None:
         super().__init__()
         self.ihdp_path = ihdp_path
         self.dlist = dlist
+        self.tlist = tlist
         self.loader_kwargs = dict(
             batch_size=batch_size,
             num_workers=num_workers,
@@ -71,21 +79,24 @@ class ExposureShiftCIHDP(pl.LightningDataModule):
         N = x.shape[0]
 
         # treatment
-        tnoise = 0.1 * torch.randn(N)
+        tnoise = noise_size * torch.randn(N)
         t = make_treatment(x, tnoise)
 
         # outcome
-        onoise = 0.1 * torch.randn(N)
+        onoise = noise_size * torch.randn(N)
         y = make_outcome(x, t, onoise)
 
         # counterfactuals under distributional exposure shifts
         # here we reuse onoise; the vcnet code doesn't do this, but
         # it makes more sense from the point of view of
         # viewing the noise the exogeneous variables of an individual
-        cfs = stack([make_outcome(x, d * t, onoise) for d in self.dlist], 1)
+        cfs_es = stack([make_outcome(x, d * t, onoise) for d in self.dlist], 1)
+
+        # counterfactuals for average dose response curve
+        cfs_dose = stack([make_outcome(x, torch.full_like(t, ti), onoise) for ti in self.tlist], 1)
 
         # split in train/test
-        self.full_dataset = TensorDataset(x, t, y, cfs)
+        self.full_dataset = TensorDataset(x, t, y, cfs_es, cfs_dose)
         self.train, self.val = random_split(self.full_dataset, [0.8, 0.2])
 
     def train_dataloader(self):
