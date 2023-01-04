@@ -4,6 +4,60 @@ from torch import nn
 import numpy
 
 
+class VCNet(nn.Module):
+    def __init__(
+        self, encoder_config, num_grids, pred_head_config, spline_degree, spline_knots
+    ):
+        """Varying coefficient neural networks
+
+        Args:
+            encoder_layer_params (Tuple[Tuple]): (in_dimension, out_dimension, bias)
+            num_grids (int): number of grids for linear interpolation in the density estimators
+
+        """
+
+        super(VCNet, self).__init__()
+
+        self.encoder = Encoder(encoder_config)
+
+        density_estimator_in_dimension = encoder_config[-1][1]
+
+        self.density_estimator = DensityEstimator(
+            density_estimator_in_dimension, num_grids
+        )
+        self.prediction_head = VCPredictionHead(
+            pred_head_config, spline_degree, spline_knots
+        )
+
+    def forward(self, treatment, confounders):
+        z = self.encoder(confounders)
+        probability_score = self.density_estimator(treatment, z)
+        predicted_outcome = self.prediction_head(treatment, z)
+        return {
+            "z": z,
+            "prob_score": probability_score,
+            "predicted_outcome": predicted_outcome,
+        }
+
+    def _initialize_weights(self):
+        # TODO: maybe add more distribution for initialization
+        for m in self.modules():
+            # if isinstance(m, Dynamic_FC):
+            #    m.weight.data.normal_(0, 1.0)
+            #    if m.isbias:
+            #        m.bias.data.zero_()
+
+            # TODO: Ensure parameters defined in the prediction head are initialized as above
+            if isinstance(m, nn.Linear):
+                m.weight.data.normal_(0, 0.01)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            # elif isinstance(m, DensityEstimator):
+            #    m.weight.data.normal_(0, 0.01)
+            #    if m.isbias:
+            #        m.bias.data.zero_()
+
+
 class Encoder(nn.Module):
     def __init__(self, layer_params):
         """The encoder takes the treatment and covariates and map them to both an
@@ -17,10 +71,6 @@ class Encoder(nn.Module):
 
         """
         super(Encoder, self).__init__()
-
-        # self.n_layers = n_layers
-        # self.n_input_features = n_input_features
-        # self.n_output_features = n_output_features
 
         layers = []
         for param in layer_params:
@@ -94,51 +144,154 @@ class DensityEstimator(nn.Module):
         return gen_propensity_score
 
 
-class VCNet(nn.Module):
-    def __init__(self, encoder_layer_params, num_grids):
-        """_summary_
+class DynamicLinearLayer(nn.Module):
+    def __init__(
+        self,
+        in_dimension,
+        out_dimension,
+        is_bias,
+        spline_degree,
+        spline_knots,
+        is_last_layer=0,
+    ):
+        super(Dynamic_FC, self).__init__()
+        self.in_dimension = in_dimension
+        self.out_dimension = out_dimension
+        self.is_bias = is_bias
+        self.spline_degree = spline_knots
+        self.spline_knots = spline_knots
+        self.is_last_layer = is_last_layer
 
-        Args:
-            encoder_layer_params (Tuple[Tuple]): (in_dimension, out_dimension, bias)
-            num_grids (_type_): _description_
+        self.spline_basis = TruncatedPowerBasis(degree, knots)
 
-        Returns:
-            _type_: _description_
-        """
+        self.num_of_spline_basis = self.spline_basis.num_of_basis  # num of basis
 
-        super(VCNet, self).__init__()
-
-        self.encoder = Encoder(encoder_layer_params)
-
-        density_estimator_in_dimension = encoder_layer_params[-1][1]
-
-        self.density_estimator = DensityEstimator(
-            density_estimator_in_dimension, num_grids
+        self.weight = nn.Parameter(
+            torch.rand(self.in_dimension, self.out_dimension, self.num_of_spline_basis),
+            requires_grad=True,
         )
 
-    def forward(self, treatment, covariates):
-        z = self.encoder(covariates)
-        probability_score = self.density_estimator(treatment, z)
+        if self.is_bias:
+            self.bias = nn.Parameter(
+                torch.rand(self.out_dimension, self.num_of_spline_basis),
+                requires_grad=True,
+            )
+        else:
+            self.bias = None
 
-        return {"rep_vector": z, "prob_score": probability_score}
+        self.relu = nn.ReLU(inplace=True)
 
-    def _initialize_weights(self):
-        # TODO: maybe add more distribution for initialization
-        for m in self.modules():
-            # if isinstance(m, Dynamic_FC):
-            #    m.weight.data.normal_(0, 1.0)
-            #    if m.isbias:
-            #        m.bias.data.zero_()
+    def forward(self, x):
 
-            # TODO: Ensure parameters defined in the prediction head are initialized as above
-            if isinstance(m, nn.Linear):
-                m.weight.data.normal_(0, 0.01)
-                if m.bias is not None:
-                    m.bias.data.zero_()
-            # elif isinstance(m, DensityEstimator):
-            #    m.weight.data.normal_(0, 0.01)
-            #    if m.isbias:
-            #        m.bias.data.zero_()
+        features = x[:, 1:]
+        treatment = x[:, 0]
+
+        hidden = torch.matmul(self.weight.T, features.T).T
+
+        treatment_basis = self.spline_basis(treatment)  # bs, d
+        treatment_basis = torch.unsqueeze(treatment_basis, 1)
+
+        out = torch.sum(hidden * treatment_basis, dim=2)  # bs, outd
+
+        if self.isbias:
+            out_bias = torch.matmul(self.bias, hidden.T).T
+            out = out + out_bias
+
+        out = self.relu(out)
+
+        if not self.is_last_layer:
+            # Concatenate to treatment if not last layer
+            out = self.relu(out)
+            out = torch.cat((torch.unsqueeze(treatment, 1), out), 1)
+
+        return out
+
+
+class VCPredictionHead(nn.Module):
+    def __init__(self, config, spline_degree, spline_knots):
+
+        """This module generates a varying coefficient prediction head by stacking
+        multiple DynamicLinearLayer objects
+        """
+        super(VCPredictionHead, self).__init__()
+
+        self.spline_degree = spline_degree
+        self.spline_knots = spline_knots
+
+        blocks = []
+        is_last_layer = False
+        for idx, params in enumerate(config):
+            if idx == len(config) - 1:
+                is_last_layer = True
+
+            block = DynamicLinearLayer(
+                params[0], params[1], params[2], spline_degree, spline_knots
+            )
+
+            blocks.append(block)
+
+        self.prediction_head = nn.Sequential(**block)
+
+    def forward(self, treatment, z):
+
+        treatment_hidden = torch.cat((torch.unsqueeze(treatment, 1), z), 1)
+        return self.prediction_head(treatment_hidden)
+
+
+class TruncatedPowerBasis:
+    def __init__(self, degree, knots):
+
+        """
+        This class construct the truncated power basis; the data is assumed in [0,1]
+
+        Args:
+            degree (int): the degree of truncated basis
+            knots (list): the knots of the spline basis; two end points (0,1) should not be included
+
+        """
+
+        self.degree = degree
+        self.knots = knots
+        self.num_of_basis = self.degree + 1 + len(self.knots)
+        self.relu = nn.ReLU(inplace=True)
+
+        if self.degree == 0:
+            raise ValueError("Degree should not set to be 0!")
+
+        if not isinstance(self.degree, int):
+            raise ValueError("Degree should be int")
+
+        if 0 in knots or 1 in knots:
+            raise ValueError("Values 0 or 1 cannot be in knots")
+
+    def __call__(self, x):
+
+        """
+
+        Args:
+            x (torch.tensor), treatment (batch size * 1)
+
+
+        Returns:
+            the value of each basis given x; batch_size * self.num_of_basis
+        """
+        x = x.squeeze()
+        out = torch.zeros(x.shape[0], self.num_of_basis)
+        for value in range(self.num_of_basis):
+            if value <= self.degree:
+                if base == 0:
+                    out[:, value] = 1.0
+                else:
+                    out[:, value] = x**value
+            else:
+                if self.degree == 1:
+                    out[:, value] = self.relu(x - self.knots[value - self.degree])
+                else:
+                    out[:, _] = (
+                        self.relu(x - self.knots[value - self.degree - 1])
+                    ) ** self.degree
+
+        return out
 
 
 def get_linear_interpolation_params(treatment, num_grid):
