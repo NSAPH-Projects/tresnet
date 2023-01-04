@@ -2,28 +2,6 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 
-class Batch:
-    """Create a batch that goes into the training pipeline"""
-
-    treatment = None
-    outcome = None
-    covariates = None
-
-    def get_batch(self, attr: dict):
-        """_summary_
-
-        Args:
-            attr (dict): Dictionary containing "treatment", "outcome", and "covariates" as key.
-
-        Returns:
-            Batch: returns a Batch object with all needed attributes assigned
-        """
-
-        self.treatment = attr["treatment"]
-        self.outcome = attr["outcome"]
-        self.covariates = attr["covariates"]
-
-
 class DatasetFromMatrix(Dataset):
     """Create the pyTorch Dataset object that groes into the dataloader."""
 
