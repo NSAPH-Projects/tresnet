@@ -32,15 +32,28 @@ t_grid = torch.from_numpy(data.to_numpy()).float()
 
 train_loader = get_iter(train_matrix, batch_size=500, shuffle=False)
 
-config_density_estimator = [(6, 50, 1), (50, 50, 1)]
+density_estimator_config = [(6, 50, 1), (50, 50, 1)]
 num_grid = 10
+
+pred_head_config = [
+    (
+        50,
+        50,
+        1,
+    ),
+    (50, 1, 1),
+]
+spline_degree = 2
+spline_knots = [0.33, 0.66]
 
 
 # TODO: define model
 
 # torch.manual_seed(seed)
-model = VCNet(config_density_estimator, num_grid)
-model._initialize_weights()
+model = VCNet(
+    density_estimator_config, num_grid, pred_head_config, spline_degree, spline_knots
+)
+# model._initialize_weights()
 # TODO: restore the weight initialization
 
 # print(model)
