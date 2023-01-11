@@ -13,62 +13,6 @@ import pandas as pd
 from minimal_ihdp import IHDP_C
 
 
-class VCLinear(nn.Module):
-    """Implements a varying coefficient linear layer"""
-
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        deg: int,
-        knots: int,
-        bias: bool = True,
-        condition_dim: int = 1,
-    ):
-        super().__init__()
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.condition_dim = condition_dim
-        self.deg = deg
-        self.knots = knots
-        self.num_basis = deg + 1 + len(knots)
-        self.coef_dim = condition_dim * self.num_basis
-        self.weight = nn.Parameter(torch.empty((self.coef_dim, input_dim, output_dim)))
-        if bias:
-            self.bias = nn.Parameter(torch.empty(output_dim))
-        else:
-            self.register_parameter("bias", None)
-        self.reset_parameters()
-
-    def reset_parameters(self) -> None:
-        # identical to reset_parameters in nn.Linear
-        nn.init.kaiming_uniform_(self.weight, a=np.sqrt(5))
-        if self.bias is not None:
-            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
-            bound = 1 / np.sqrt(fan_in) if fan_in > 0 else 0
-            nn.init.uniform_(self.bias, -bound, bound)
-
-    def basis(self, condition: Tensor) -> Tensor:
-        out = []
-        for j in range(self.condition_dim):
-            t = condition[:, j]
-            for i in range(self.num_basis):
-                if i <= self.deg:
-                    out.append(t.pow(i))
-                else:
-                    out.append(F.relu(t - self.knots[i - self.deg - 1]).pow(self.deg))
-        return stack(out, 1)
-
-    def forward(self, x: Tensor) -> Tensor:
-        m, c = x.shape[1], self.condition_dim
-        x, condition = torch.split(x, [m - c, c], dim=1)
-        basis = self.basis(condition)
-        coefs = einsum("bc,cde->bde", basis, self.weight)
-        out = einsum("bde,bd->be", coefs, x)
-        if self.bias is not None:
-            out = out + self.bias
-        return out
-
 
 class ConditionalLogDensity(nn.Module):
     def __init__(self, input_dim: int, num_grid: int) -> None:
@@ -85,7 +29,6 @@ class ConditionalLogDensity(nn.Module):
     def forward(self, x: Tensor, t: Tensor) -> Tensor:
         N = self.N
         tN = t * N
-        in_supp = ((0.0 <= t) & (t <= 1.0)).long()
         U = tN.ceil().long().clamp(0, N - 1)
         L = tN.floor().long().clamp(0, N - 1)
         interp = (tN - L) / N
@@ -94,17 +37,14 @@ class ConditionalLogDensity(nn.Module):
         L_out = torch.gather(out, 1, L.unsqueeze(1)).squeeze(1)
         U_out = torch.gather(out, 1, U.unsqueeze(1)).squeeze(1)
         out = L_out + (U_out - L_out) * interp
-        return out * in_supp
+        return out
 
 
-class SIVCNet(pl.LightningModule):
+class DR(pl.LightningModule):
     def __init__(
         self,
+        mode: str,
         input_dim: int,
-        deg_Q: int,
-        deg_eps: int,
-        knots_Q: list[float],
-        knots_eps: list[float],
         dlist: list[float],
         tlist: list[float],
         hidden_dim: int = 50,
@@ -112,19 +52,12 @@ class SIVCNet(pl.LightningModule):
         num_hidden_layers_body: int = 1,
         num_hidden_layers_out: int = 1,
         num_density_grid: int = 20,
-        target: str = "es",
         lr: float = 0.001,
         weight_decay: float = 5e-3,
-        dreg: bool = False,
-        badq: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
         super().save_hyperparameters()
-
-        self.lr = lr
-        self.weight_decay = weight_decay
-        self.dreg = dreg
 
         h = hidden_dim
         dlist = torch.FloatTensor(dlist)
@@ -139,22 +72,12 @@ class SIVCNet(pl.LightningModule):
             layers.extend([nn.Linear(h, h), act()])
         self.body = nn.Sequential(*layers)
 
-        # outcome
-        self.Q = nn.ModuleList([VCLinear(h, 1, deg_Q, knots_Q)])
-        for _ in range(num_hidden_layers_out):
-            l = nn.Sequential(VCLinear(h, h, deg_Q, knots_Q), act())
-            self.Q.insert(0, l)
-        if badq:
-            for p in self.Q.parameters():
-                p.requires_grad_(False)
-
         # density head
-        self.logdens = ConditionalLogDensity(h, num_density_grid)
+        if mode == "density":
+            self.logdens = ConditionalLogDensity(h, num_density_grid)
+        elif mode == "classifier":
+            self.cl = nn.Linear(h, len(dlist))
 
-        # epsilon for target regularization
-        self.target = target if target != "none" else None
-        if target:
-            self.tr = VCLinear(1, 1, deg_eps, knots_eps)
 
     def evalQ(self, hidden: Tensor, t: Tensor) -> Tensor:
         out = hidden
@@ -172,11 +95,11 @@ class SIVCNet(pl.LightningModule):
             d = self.dlist[ix]
             eps = self.tr(d.unsqueeze(1)).squeeze(1)
             dr = self.density_ratio(hidden, t, d, target=target)
-            ytilde = yhat + eps * dr# .detach()
+            ytilde = yhat + eps * dr.detach()
         elif target == "dose":
             dr = self.density_ratio(hidden, t, t, target=target)
             eps = self.tr(t.unsqueeze(1)).squeeze(1)
-            ytilde = yhat + eps * dr# .detach()
+            ytilde = yhat + eps * dr.detach()
         else:
             ytilde = yhat.detach()
         return ytilde, yhat, hidden
@@ -195,19 +118,6 @@ class SIVCNet(pl.LightningModule):
                 ycf = self.evalQ(hidden, t * d)
                 cfs.append(ycf)
         return stack(cfs, 1)
-
-    def dratio_reg(self, hidden: Tensor, t: Tensor):
-        ix = torch.randint(len(self.dlist), size=(t.shape[0],), device=t.device)
-        d = self.dlist[ix]
-        Z = torch.rand_like(t) < 0.5
-        ttilde = torch.where(Z, t * d, t)
-        logdr = (
-            d.log()
-            + self.logdens(hidden, ttilde / d)
-            - self.logdens(hidden, ttilde)
-        )
-        return F.binary_cross_entropy_with_logits(logdr, Z.float())
-
 
     def dose_counterfactuals(self, hidden: Tensor, t: Tensor) -> Tensor:
         cfs = []
@@ -242,7 +152,7 @@ class SIVCNet(pl.LightningModule):
         return density_ratio
 
     def training_step(self, batch: tuple[Tensor], _: int) -> Tensor:
-        x, t, y, cf_es, cf_dose = batch
+        x, t, y, *_ = batch
 
         ytilde, yhat, hidden = self.forward(x, t)
 
@@ -259,28 +169,8 @@ class SIVCNet(pl.LightningModule):
         tr_loss = F.mse_loss(ytilde, y) if self.target else 0.0
         self.log("tr", float(tr_loss), on_epoch=True, on_step=False)
 
-        total = mse_loss  + tr_loss + ps_loss
+        total = mse_loss + ps_loss + tr_loss
         self.log("total", float(total), on_epoch=True, on_step=False)
-
-        # 4. exposure shift counterfactual loss
-        cf_hat = self.es_counterfactuals(hidden, t)
-        cf_loss = F.mse_loss(cf_es, cf_hat)
-        error = F.mse_loss(cf_es.mean(0), cf_hat.mean(0))
-        self.log("cf_es", float(cf_loss), on_epoch=True, on_step=False)
-        self.log("rc_es", float(error), on_epoch=True, on_step=False)
-
-        # 5. average curve counterfactual loss
-        cf_hat = self.dose_counterfactuals(hidden, t)
-        cf_loss = F.mse_loss(cf_dose, cf_hat)
-        error = F.mse_loss(cf_dose.mean(0), cf_hat.mean(0))
-        self.log("cf_dose", float(cf_loss), on_epoch=True, on_step=False)
-        self.log("rc_dose", float(error), on_epoch=True, on_step=False)
-
-        # 6. dreg loss
-        dreg = self.dratio_reg(hidden, t)
-        self.log("dreg", dreg.item(), on_epoch=True, on_step=False)
-        if self.dreg:
-            total = total + dreg
 
         return total
 
@@ -315,26 +205,22 @@ class SIVCNet(pl.LightningModule):
         self.log("vcf_dose", float(cf_loss), on_epoch=True, on_step=False)
         self.log("vrc_dose", float(error), on_epoch=True, on_step=False)
 
-        # 6. dreg loss
-        dreg = self.dratio_reg(hidden, t)
-        self.log("vdreg", dreg.item(), on_epoch=True, on_step=False)
-
     def configure_optimizers(self):
         core_modules = [self.body, self.Q, self.logdens]
         core_params = nn.ModuleList(core_modules).parameters()
-        groups = [dict(params=core_params, weight_decay=self.weight_decay)]
+        wd, lr = [self._hparams[k] for k in ("weight_decay", "lr")]
+        groups = [dict(params=core_params, weight_decay=wd)]
         if self.target:
             groups.append(dict(params=self.tr.parameters(), weight_decay=0.0))
-        optim = torch.optim.Adam(groups, lr=self.lr)
-        sched = torch.optim.lr_scheduler.StepLR(optim, 2000, gamma=0.1)
-        return dict(optimizer=optim, lr_scheduler=sched)
+        optim = torch.optim.Adam(groups, lr=lr)
+        return optim
 
 
 def main(args: argparse.Namespace) -> None:
     pl.seed_everything(args.seed, workers=True)
 
     dlist = np.arange(0.05, 1.0, 0.05).tolist()
-    tlist = np.arange(0.0, 1.0, 0.05).tolist()
+    tlist = np.arange(0.05, 1.0, 0.05).tolist()
     datamodule = IHDP_C(
         args.ihdp_path, dlist=dlist, tlist=tlist, num_workers=8, batch_size=32
     )
@@ -342,7 +228,7 @@ def main(args: argparse.Namespace) -> None:
     trainer = pl.Trainer(
         accelerator="cpu",
         devices=1,
-        auto_lr_find=False,
+        auto_lr_find=True,
         gradient_clip_val=100,
         max_epochs=5000,
         logger=TensorBoardLogger(save_dir=args.logdir, name="minimal"),
@@ -359,16 +245,13 @@ def main(args: argparse.Namespace) -> None:
         knots_Q=[0.33, 0.66],
         knots_eps=np.arange(0.1, 1, 0.1).tolist(),
         hidden_dim=50,
-        num_hidden_layers_body=1,
-        num_hidden_layers_out=1,
-        act="LeakyReLU",
-        num_density_grid=50,
+        num_hidden_layers_body=0,
+        num_hidden_layers_out=0,
+        act="ReLU",
+        num_density_grid=20,
         target=args.target,
         seed=args.seed,
         weight_decay=args.weight_decay,
-        dreg=args.dreg,
-        lr=0.001,
-        badq=args.badq
     )
     trainer.fit(model, datamodule)
 
@@ -403,11 +286,9 @@ if __name__ == "__main__":
     parser.add_argument("--ihdp_path", type=str, default="dataset/ihdp/ihdp.csv")
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument(
-        "--target", default="none", type=str, choices=("dose", "es", "none")
+        "--target", default="dose", type=str, choices=("dose", "es", "none")
     )
     parser.add_argument("--logdir", type=str, default="logs")
-    parser.add_argument("--dreg", default=False, action="store_true")
-    parser.add_argument("--badq", default=True, action="store_true")
     parser.add_argument("--weight_decay", type=float, default=5e-3)
     args = parser.parse_args()
     main(args)

@@ -4,11 +4,17 @@ import numpy as np
 import os
 import pandas as pd
 
-from models.model import Vcnet  # , Drnet, TR
+from models.model import Vcnet, TR  # , Drnet
 from data.data import get_iter
 from utils.eval import curve
 
 import argparse
+
+
+def save_checkpoint(state, checkpoint_dir='.'):
+    filename = os.path.join(checkpoint_dir, model_name + '_ckpt.pth.tar')
+    print('=> Saving checkpoint to {}'.format(filename))
+    torch.save(state, filename)
 
 
 def adjust_learning_rate(optimizer, init_lr, epoch):

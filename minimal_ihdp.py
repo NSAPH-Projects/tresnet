@@ -16,9 +16,9 @@ def make_treatment(x: Tensor, noise: Tensor) -> Tensor:
     C1 = pmax(x3, x5, x6) / (0.2 + pmin(x3, x5, x6))
     C2 = (5.0 * xcate2).tanh()
     Z = (torch.rand_like(noise) < 0.75).float()
-    U = (-Z + 0.5 * xcate2).sigmoid()
     # t = (2.0 * (C0 + C1 + C2) - 4.0 + noise).sigmoid()
-    # nex 3 lines are new
+    # next 4 lines are new instead of previous one
+    U = (-Z + 0.5 * xcate2).sigmoid()
     U = U / U.max()
     t = (0.1 + 0.8*(2.0 * (C0 + C1 + C2) - 4.0 + noise)).sigmoid() * U
     t = t / t.max()
