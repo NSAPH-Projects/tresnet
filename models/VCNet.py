@@ -31,7 +31,11 @@ class VCNet(nn.Module):
 
     def forward(self, treatment, confounders):
         z = self.encoder(confounders)
+
+        # Density estimator
         probability_score = self.density_estimator(treatment, z)
+
+        # Prediction head
         predicted_outcome = self.prediction_head(treatment, z)
         return {
             "z": z,
@@ -40,22 +44,9 @@ class VCNet(nn.Module):
         }
 
     def _initialize_weights(self):
-        # TODO: maybe add more distribution for initialization
-        for m in self.modules():
-            # if isinstance(m, Dynamic_FC):
-            #    m.weight.data.normal_(0, 1.0)
-            #    if m.isbias:
-            #        m.bias.data.zero_()
-
-            # TODO: Ensure parameters defined in the prediction head are initialized as above
-            if isinstance(m, nn.Linear):
-                m.weight.data.normal_(0, 0.01)
-                if m.bias is not None:
-                    m.bias.data.zero_()
-            # elif isinstance(m, DensityEstimator):
-            #    m.weight.data.normal_(0, 0.01)
-            #    if m.isbias:
-            #        m.bias.data.zero_()
+        self.encoder._initialize_weights()
+        self.density_estimator._initialize_weights()
+        self.prediction_head._initialize_weights()
 
 
 class Encoder(nn.Module):
@@ -92,6 +83,14 @@ class Encoder(nn.Module):
         """
 
         return self.encoder(covariates)
+
+    def _initialize_weights(self):
+        # TODO: maybe add more distribution for initialization
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                m.weight.data.normal_(0, 0.01)
+                if m.bias is not None:
+                    m.bias.data.zero_()
 
 
 class DensityEstimator(nn.Module):
@@ -143,6 +142,13 @@ class DensityEstimator(nn.Module):
 
         return gen_propensity_score
 
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                m.weight.data.normal_(0, 0.01)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+
 
 class DynamicLinearLayer(nn.Module):
     def __init__(
@@ -152,17 +158,17 @@ class DynamicLinearLayer(nn.Module):
         is_bias,
         spline_degree,
         spline_knots,
-        is_last_layer=0,
+        is_last_layer,
     ):
-        super(Dynamic_FC, self).__init__()
+        super(DynamicLinearLayer, self).__init__()
         self.in_dimension = in_dimension
         self.out_dimension = out_dimension
         self.is_bias = is_bias
-        self.spline_degree = spline_knots
+        self.spline_degree = spline_degree
         self.spline_knots = spline_knots
         self.is_last_layer = is_last_layer
 
-        self.spline_basis = TruncatedPowerBasis(degree, knots)
+        self.spline_basis = TruncatedPowerBasis(spline_degree, spline_knots)
 
         self.num_of_spline_basis = self.spline_basis.num_of_basis  # num of basis
 
@@ -189,15 +195,13 @@ class DynamicLinearLayer(nn.Module):
         hidden = torch.matmul(self.weight.T, features.T).T
 
         treatment_basis = self.spline_basis(treatment)  # bs, d
-        treatment_basis = torch.unsqueeze(treatment_basis, 1)
+        treatment_basis_unsqueezed = torch.unsqueeze(treatment_basis, 1)
 
-        out = torch.sum(hidden * treatment_basis, dim=2)  # bs, outd
+        out = torch.sum(hidden * treatment_basis_unsqueezed, dim=2)  # bs, outd
 
-        if self.isbias:
-            out_bias = torch.matmul(self.bias, hidden.T).T
+        if self.is_bias:
+            out_bias = torch.matmul(self.bias, treatment_basis.T).T
             out = out + out_bias
-
-        out = self.relu(out)
 
         if not self.is_last_layer:
             # Concatenate to treatment if not last layer
@@ -225,17 +229,29 @@ class VCPredictionHead(nn.Module):
                 is_last_layer = True
 
             block = DynamicLinearLayer(
-                params[0], params[1], params[2], spline_degree, spline_knots
+                params[0],
+                params[1],
+                params[2],
+                spline_degree,
+                spline_knots,
+                is_last_layer,
             )
 
             blocks.append(block)
 
-        self.prediction_head = nn.Sequential(**block)
+        self.prediction_head = nn.Sequential(*blocks)
 
     def forward(self, treatment, z):
 
         treatment_hidden = torch.cat((torch.unsqueeze(treatment, 1), z), 1)
         return self.prediction_head(treatment_hidden)
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, DynamicLinearLayer):
+                m.weight.data.normal_(0, 1.0)
+                if m.is_bias:
+                    m.bias.data.zero_()
 
 
 class TruncatedPowerBasis:
@@ -279,7 +295,7 @@ class TruncatedPowerBasis:
         out = torch.zeros(x.shape[0], self.num_of_basis)
         for value in range(self.num_of_basis):
             if value <= self.degree:
-                if base == 0:
+                if value == 0:
                     out[:, value] = 1.0
                 else:
                     out[:, value] = x**value
@@ -287,7 +303,7 @@ class TruncatedPowerBasis:
                 if self.degree == 1:
                     out[:, value] = self.relu(x - self.knots[value - self.degree])
                 else:
-                    out[:, _] = (
+                    out[:, value] = (
                         self.relu(x - self.knots[value - self.degree - 1])
                     ) ** self.degree
 

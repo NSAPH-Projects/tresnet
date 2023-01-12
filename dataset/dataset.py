@@ -21,8 +21,6 @@ class DatasetFromMatrix(Dataset):
             idx = idx.tolist()
         sample = self.data_matrix[idx, :]
 
-        batch = Batch()
-
         return {
             "treatment": sample[0],
             "covariates": sample[1:-1],

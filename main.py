@@ -6,6 +6,14 @@ import numpy as np
 import torch
 
 
+# TODO:
+# 1. Check the indices of outcome, treatment and confounders [DONE]
+# Check the shape of the outcome of the baseline model
+# 2. Implement loss function
+# 3. Implement optimizer and put all the criteria in
+# 4. Document all the datasets
+# 5. Run experiments
+
 from models.VCNet import VCNet
 from dataset.dataset import get_iter
 
@@ -53,7 +61,7 @@ spline_knots = [0.33, 0.66]
 model = VCNet(
     density_estimator_config, num_grid, pred_head_config, spline_degree, spline_knots
 )
-# model._initialize_weights()
+model._initialize_weights()
 # TODO: restore the weight initialization
 
 # print(model)
@@ -71,8 +79,9 @@ for idx, item in enumerate(train_loader):
     if is_target_reg:
         # optimizer.zero_grad()
         out = model.forward(t, x)
-
-        print("The conditional estimator works")
+        print("Output", out)
+        print("Output shape", out["predicted_outcome"].shape)
+        print("The full model works")
         raise
         # TODO: remove the raise from here
         trg = TargetReg(t)
