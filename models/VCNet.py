@@ -310,6 +310,30 @@ class TruncatedPowerBasis:
         return out
 
 
+class LossTargetedRegularizer(nn.Module):
+    def __init__(self, degree, knots):
+        super(LossTargetedRegularizer, self).__init__()
+        self.spline_basis = Truncated_power(degree, knots)
+        self.num_basis = self.spline_basis.num_of_basis  # num of basis
+        self.weight = nn.Parameter(torch.rand(self.num_basis), requires_grad=True)
+
+    def forward(self, t):
+        """
+
+        Args:
+            t (torch.tensor): Treatment
+
+        Returns:
+            torch.tensor
+        """
+        out = self.spline_basis.forward(t)
+        out = torch.matmul(out, self.weight)
+        return out
+
+    def _initialize_weights(self):
+        self.weight.data.zero_()
+
+
 def get_linear_interpolation_params(treatment, num_grid):
 
     """
