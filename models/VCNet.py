@@ -136,11 +136,9 @@ class DensityEstimator(nn.Module):
 
         upper_bounds = out[:, upper_grid_idx]  # Get values at the upper grid index
 
-        gen_propensity_score = (
-            lower_bounds + (upper_bounds - lower_bounds) * distance_to_lower
-        )
+        prob_score = lower_bounds + (upper_bounds - lower_bounds) * distance_to_lower
 
-        return gen_propensity_score
+        return prob_score
 
     def _initialize_weights(self):
         for m in self.modules():
@@ -310,10 +308,10 @@ class TruncatedPowerBasis:
         return out
 
 
-class LossTargetedRegularizer(nn.Module):
+class TargetedRegularizerCoeff(nn.Module):
     def __init__(self, degree, knots):
-        super(LossTargetedRegularizer, self).__init__()
-        self.spline_basis = Truncated_power(degree, knots)
+        super(TargetedRegularizerCoeff, self).__init__()
+        self.spline_basis = TruncatedPowerBasis(degree, knots)
         self.num_basis = self.spline_basis.num_of_basis  # num of basis
         self.weight = nn.Parameter(torch.rand(self.num_basis), requires_grad=True)
 
@@ -326,7 +324,7 @@ class LossTargetedRegularizer(nn.Module):
         Returns:
             torch.tensor
         """
-        out = self.spline_basis.forward(t)
+        out = self.spline_basis(t)
         out = torch.matmul(out, self.weight)
         return out
 
