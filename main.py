@@ -16,7 +16,8 @@ from utils.loss import criterion
 # 4. Document all the datasets
 # 5. Run experiments
 
-from models.VCNet import VCNet, TargetedRegularizerCoeff
+from models.VCNet import VCNet
+from models.modules import TargetedRegularizerCoeff
 from dataset.dataset import get_iter
 
 # TODO: Change shuffling in dataloader (get_iter) to True here and in legacy
@@ -58,6 +59,7 @@ pred_spline_knots = [0.33, 0.66]
 
 loss_tr_knots = list(np.arange(0.1, 1, 0.1))
 loss_tr_degree = 2
+
 targeted_regularizer = TargetedRegularizerCoeff(loss_tr_degree, loss_tr_knots)
 targeted_regularizer._initialize_weights()
 
@@ -105,7 +107,7 @@ tr_optimizer = torch.optim.SGD(
 
 is_target_reg = True
 
-num_epoch = 10
+num_epoch = 800
 
 for epoch in range(num_epoch):
     for idx, item in enumerate(train_loader):
@@ -133,4 +135,4 @@ for epoch in range(num_epoch):
             tr_optimizer.step()
         if epoch % 100 == 0:
             print("current epoch: ", epoch)
-            print("loss: ", loss["total_loss"].data)
+            print("loss value: ", round(loss["total_loss"].data.item(), 4))

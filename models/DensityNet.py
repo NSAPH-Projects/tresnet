@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from modules import Encoder, DensityEstimator
+from .modules import Encoder, DensityEstimator
 import numpy
 
 

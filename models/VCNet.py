@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from modules import Encoder, DensityEstimator, VCPredictionHead
+from .modules import Encoder, DensityEstimator, VCPredictionHead
 import numpy
 
 
