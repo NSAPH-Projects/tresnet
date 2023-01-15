@@ -4,7 +4,15 @@ from torch import cat, stack
 from torch import Tensor
 import pandas as pd
 
-DATASETS = ("ihdp-N", "sim-N", "news-N", "sim-B", "news-B", "tcga-B", "sim-T")
+DATASETS = (
+    "sim-N",  # simu1 simulated data in VCNet (Nie et al., 2021)
+    "ihdp-N",  # IHDP modification in VCNet (Niet et al., 2021)
+    "news-N",  # News modification in VCNet (Niet et al., 2021)
+    "sim-B",  # Simulated data in SCIGAN (Bica et al., 2020)
+    "news-B",  # News modification in SCIGAN (Bica et al., 2020)
+    "tcga-B",  # TCGA modification in SCIGAN (Bica et al., 2020)
+    "sim-T"  # Simulated data in E2B (Taha Bahadori et al., 2022)
+)
 
 
 class DatasetFromMatrix(Dataset):
@@ -90,7 +98,7 @@ def load_data(dataset: str, n_train: int | None, n_test: int | None) -> tuple[in
         raise NotImplementedError
     elif dataset == "sim-B":  # Simulated data in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
-    elif dataset == "news-B":  # IHDP modification in SCIGAN (Bica et al., 2020)
+    elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
     elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
@@ -140,7 +148,7 @@ def outcome(t: Tensor, x: Tensor, dataset: str, noise: Tensor | None = None) -> 
         raise NotImplementedError
     elif dataset == "sim-B":  # Simulated data in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
-    elif dataset == "news-B":  # IHDP modification in SCIGAN (Bica et al., 2020)
+    elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
     elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
