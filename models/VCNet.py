@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from .modules import Encoder, DensityEstimator, VCPredictionHead
+from .modules import Encoder, DiscreteDensityEstimator, VCPredictionHead
 import numpy
 
 
@@ -22,7 +22,7 @@ class VCNet(nn.Module):
 
         density_estimator_in_dimension = encoder_config[-1][1]
 
-        self.density_estimator = DensityEstimator(
+        self.density_estimator = DiscreteDensityEstimator(
             density_estimator_in_dimension, num_grids
         )
         self.prediction_head = VCPredictionHead(

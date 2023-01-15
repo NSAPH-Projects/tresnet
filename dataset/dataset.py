@@ -3,6 +3,9 @@ from torch.utils.data import Dataset, DataLoader
 from torch import cat, stack
 from torch import Tensor
 import pandas as pd
+import numpy as np
+import random
+
 
 DATASETS = (
     "sim-N",  # simu1 simulated data in VCNet (Nie et al., 2021)
@@ -11,7 +14,7 @@ DATASETS = (
     "sim-B",  # Simulated data in SCIGAN (Bica et al., 2020)
     "news-B",  # News modification in SCIGAN (Bica et al., 2020)
     "tcga-B",  # TCGA modification in SCIGAN (Bica et al., 2020)
-    "sim-T"  # Simulated data in E2B (Taha Bahadori et al., 2022)
+    "sim-T",  # Simulated data in E2B (Taha Bahadori et al., 2022)
 )
 
 
@@ -21,7 +24,7 @@ class DatasetFromMatrix(Dataset):
     def __init__(self, data_matrix):
         """
         Args: create a torch dataset from a tensor data_matrix with size n * p
-        [treatment, features, outcome]
+        [treatment, features, outcome]`z
         """
         self.data_matrix = data_matrix
         self.num_data = data_matrix.shape[0]
@@ -47,12 +50,25 @@ def get_iter(data_matrix, batch_size, shuffle=True):
     return iterator
 
 
-def load_data(dataset: str, n_train: int | None, n_test: int | None) -> tuple[int]:
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.enabled = False
+
+
+def load_data(
+    dataset: str, n_train: int | None = None, n_test: int | None = None
+) -> tuple[int]:
     """n_train, n_test only useful for simulated datasets"""
     if dataset == "sim-N":  # simu1 simulated data in VCNet (Nie et al., 2021)
-        n = n_train, n_test
-        x1, x2, x3, x4, x5, x6 = [torch.rand(n) for j in range(5)]
-        x = stack(x1, x2, x3, x4, x5, x6)
+        n = n_train + n_test
+        x = torch.rand((n, 6))
+        x1, x2, x3, x4, x5, x6 = [x[:, j] for j in range(6)]
         logits = (
             (10.0 * Max(x1, x2, x3).sin() + Max(x3, x4, x5).pow(3))
             / (1.0 + (x1 + x5).pow(2))
@@ -70,6 +86,7 @@ def load_data(dataset: str, n_train: int | None, n_test: int | None) -> tuple[in
     elif dataset == "ihdp-N":  # IHDP modification in VCNet (Niet et al., 2021)
         x = pd.read_csv("dataset/ihdp/ihdp.csv", usecols=range(2, 27))
         x = torch.FloatTensor(x.to_numpy())
+        n = x.shape[0]
 
         # normalize the data
         # !mauricio: really weird normalization
@@ -108,7 +125,7 @@ def load_data(dataset: str, n_train: int | None, n_test: int | None) -> tuple[in
         raise ValueError(dataset)
 
 
-def support(dataset: str) -> tuple[callable[Tensor]]:
+def support(dataset: str) -> str:
     """Returns link and inverse link"""
     if dataset in ("sim-N", "ihdp-N", "news-N"):  # VCNet datasets (Nie et al., 2021)
         return "unit"
@@ -161,19 +178,18 @@ def outcome(t: Tensor, x: Tensor, dataset: str, noise: Tensor | None = None) -> 
 def make_dataset(
     dataset: str,
     delta_list: Tensor,
-    *args,
     **kwargs,
 ) -> dict[Tensor]:
     """
     delta_std is the number of standard deviations to reduce from the treatment
     n_train, n_test only useful for simulated datasets
-    args, kwargs are passed to load_data
+    akwargs are passed to load_data
     """
     # -- should be same as vcnet code, but vectorized -- #
 
-    D = load_data(dataset, *args, **kwargs)
+    D = load_data(dataset, **kwargs)
     x, t, train_ix, test_ix = D["x"], D["t"], D["train_ix"], D["test_ix"]
-    y, noise = outcome(t, x, dataset)
+    y, exo_noise = outcome(t, x, dataset)
 
     train_matrix = cat([t[train_ix, None], x[train_ix], y[train_ix, None]], dim=1)
     test_matrix = cat([t[test_ix, None], x[test_ix], y[test_ix, None]], dim=1)
@@ -182,17 +198,18 @@ def make_dataset(
     supp = support(dataset)
 
     if supp == "unit":
-        l = t.logit()  # logits only when treatment in (0, 1)
-        delta_scale = l.std()
-        shifted_treatments = [(l - delta_scale * d).sigmoid() for d in delta_list]
+        delta_scale = None
+        t_cf = [t * (1 - d) for d in delta_list]
+        delta_transform = "percent"
     elif supp == "real":
         delta_scale = t.std()
-        shifted_treatments = [(l - delta_scale * d) for d in delta_list]
+        t_cf = [t - delta_scale * d for d in delta_list]
+        delta_transform = "additive"
     else:
         raise NotImplementedError
 
     # make counterfactuals and shift-response curves
-    cfs = stack([outcome(t, x, noise) for t in shifted_treatments], dim=1)
+    cfs = stack([outcome(t, x, dataset, noise=exo_noise)[0] for t in t_cf], 1)
     srf_train = cfs[train_ix, :].mean(0)
     srf_test = cfs[test_ix, :].mean(0)
 
@@ -202,6 +219,7 @@ def make_dataset(
         "srf_train": srf_train,
         "srf_test": srf_test,
         "delta_scale": delta_scale,
+        "delta_transform": delta_transform,
     }
 
 

@@ -48,7 +48,7 @@ class Encoder(nn.Module):
                     m.bias.data.zero_()
 
 
-class DensityEstimator(nn.Module):
+class DiscreteDensityEstimator(nn.Module):
     def __init__(self, in_dimension, num_grids, bias=True):
         """This module uses the Encoder and a linear layer + interpolation
         to output intermediate vector z and the conditional density/generalized propensity score
@@ -58,7 +58,7 @@ class DensityEstimator(nn.Module):
             num_grids (_type_): _description_
         """
 
-        super(DensityEstimator, self).__init__()
+        super(DiscreteDensityEstimator, self).__init__()
         self.num_grids = num_grids
 
         out_dimension = num_grids + 1
@@ -86,14 +86,15 @@ class DensityEstimator(nn.Module):
             upper_grid_idx,
             distance_to_lower,
         ) = get_linear_interpolation_params(treatment, self.num_grids)
+        in_support = (treatment >= 0.0) & (treatment <= 1.0)
 
-        lower_bounds = out[:, lower_grid_idx]  # Get values at the lower grid index
-
-        upper_bounds = out[:, upper_grid_idx]  # Get values at the upper grid index
+        ix = torch.arange(out.shape[0])
+        lower_bounds = out[ix, lower_grid_idx]  # Get values at the lower grid index
+        upper_bounds = out[ix, upper_grid_idx]  # Get values at the upper grid index
 
         prob_score = lower_bounds + (upper_bounds - lower_bounds) * distance_to_lower
 
-        return prob_score
+        return prob_score * in_support.float()
 
     def _initialize_weights(self):
         for m in self.modules():

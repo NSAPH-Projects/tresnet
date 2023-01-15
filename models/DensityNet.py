@@ -1,12 +1,10 @@
-import torch
 from torch import nn
-from .modules import Encoder, DensityEstimator
-import numpy
+from .modules import Encoder, DiscreteDensityEstimator
 
 
 class DensityNet(nn.Module):
     def __init__(self, encoder_config, num_grids):
-        """Varying coefficient neural networks
+        """Density estimation neural networks
 
         Args:
             encoder_layer_params (Tuple[Tuple]): ((in_dimension, out_dimension, bias), (...))
@@ -20,7 +18,7 @@ class DensityNet(nn.Module):
 
         density_estimator_in_dimension = encoder_config[-1][1]
 
-        self.density_estimator = DensityEstimator(
+        self.density_estimator = DiscreteDensityEstimator(
             density_estimator_in_dimension, num_grids
         )
 
@@ -38,3 +36,4 @@ class DensityNet(nn.Module):
     def _initialize_weights(self):
         self.encoder._initialize_weights()
         self.density_estimator._initialize_weights()
+
