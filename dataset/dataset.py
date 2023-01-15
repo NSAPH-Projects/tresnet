@@ -1,5 +1,10 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torch import cat, stack
+from torch import Tensor
+import pandas as pd
+
+DATASETS = ("ihdp-N", "sim-N", "news-N", "sim-B", "news-B", "tcga-B", "sim-T")
 
 
 class DatasetFromMatrix(Dataset):
@@ -32,14 +37,6 @@ def get_iter(data_matrix, batch_size, shuffle=True):
     dataset = DatasetFromMatrix(data_matrix)
     iterator = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
     return iterator
-
-
-import torch
-from torch import cat, stack
-from torch import Tensor
-import pandas as pd
-
-DATASETS = ("ihdp-N", "sim-N", "news-N", "sim-B", "news-B", "tcga-B", "sim-T")
 
 
 def load_data(dataset: str, n_train: int | None, n_test: int | None) -> tuple[int]:
