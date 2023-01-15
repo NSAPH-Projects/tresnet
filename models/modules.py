@@ -296,13 +296,18 @@ def get_linear_interpolation_params(treatment, num_grid):
         Tuple: (upper grid indices, lower grid indices, distance to lower indices)
     """
 
-    upper_grid_idx = torch.ceil(treatment * num_grid)
+    # upper_grid_idx = torch.ceil(treatment * num_grid)
 
-    distance_to_lower_grid = 1 - (upper_grid_idx - (treatment * num_grid))
-    lower_grid_idx = upper_grid_idx - 1
+    # distance_to_lower_grid = 1 - (upper_grid_idx - (treatment * num_grid))
+    # lower_grid_idx = upper_grid_idx - 1
 
-    # This below handles the case when upper bound is zero
-    lower_grid_idx += (lower_grid_idx < 0).int()
+    # # This below handles the case when upper bound is zero
+    # lower_grid_idx += (lower_grid_idx < 0).int()
+
+    # mauricio: edits
+    upper_grid_idx = torch.ceil(treatment * num_grid).clamp(0, num_grid - 1)
+    lower_grid_idx = torch.floor(treatment * num_grid).clamp(0, num_grid - 1)
+    distance_to_lower_grid = treatment * num_grid - lower_grid_idx
 
     return (
         lower_grid_idx.int().tolist(),

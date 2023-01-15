@@ -200,11 +200,11 @@ def make_dataset(
     if supp == "unit":
         delta_scale = None
         t_cf = [t * (1 - d) for d in delta_list]
-        delta_transform = "percent"
+        shift_type = "percent"
     elif supp == "real":
         delta_scale = t.std()
         t_cf = [t - delta_scale * d for d in delta_list]
-        delta_transform = "additive"
+        shift_type = "subtract"
     else:
         raise NotImplementedError
 
@@ -219,7 +219,7 @@ def make_dataset(
         "srf_train": srf_train,
         "srf_test": srf_test,
         "delta_scale": delta_scale,
-        "delta_transform": delta_transform,
+        "shift_type": shift_type,
     }
 
 
