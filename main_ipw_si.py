@@ -170,6 +170,7 @@ def main(args: argparse.Namespace) -> None:
                 metrics["@0.1"] = float(errors[0.1])
                 metrics["@0.5"] = float(errors[0.5])
                 metrics["curve"] = float(curve_error)
+                metrics["seed"] = args.seed
                 with open(metrics_path, "w") as io:
                     yaml.safe_dump(metrics, io)
 
@@ -185,7 +186,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
     parser.add_argument("--n_epoch", default=10000, type=int)
-    parser.add_argument("--wd", default=5e-3, type=int)
+    parser.add_argument("--wd", default=1e-6, type=int)
     parser.add_argument("--silent", default=False, action="store_true")
 
     # regularizations available

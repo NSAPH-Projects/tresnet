@@ -1,12 +1,13 @@
 #!/bin/bash
 
-num_parallel=4
+num_parallel=5
 num_seeds=100
 num_gpus=0
 num_outer_iters=$((num_seeds / num_parallel))
-datasets=("sim-N" "ihdp-N")
-# regularizations=("" "--var_reg", "--ratio_reg" "--combo_reg")
-regularizations=("" "--combo_reg")
+datasets=("ihdp-N" "sim-N")
+regularizations=("" "--var_reg" "--ratio_reg" "--combo_reg")
+# regularizations=("--var_reg" "--ratio_reg")
+# regularizations=("" "--combo_reg")
 
 for dset in "${datasets[@]}"
 do
