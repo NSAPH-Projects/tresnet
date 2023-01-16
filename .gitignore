@@ -4,6 +4,9 @@
 .DS_store
 simu1/
 
+# Local for mauricio; just accept notebooks in this folder
+!notebooks/*.ipynb
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
