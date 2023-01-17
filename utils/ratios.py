@@ -25,10 +25,14 @@ def log_density_ratio_under_shift(
 
 
 class RatioRegularizer(nn.Module):
-    def __init__(self, delta_list) -> None:
+    def __init__(self, delta_list, multiscale: bool = True, fit_scale: bool = True) -> None:
         super().__init__()
-        self.lsig = nn.Parameter(torch.tensor(0.0))
-        self.delta_list = delta_list
+        self.register_buffer("multiscale", torch.tensor(multiscale))
+        if multiscale:
+            self.lsig = nn.Parameter(torch.zeros_like(delta_list), requires_grad=fit_scale)
+        else:
+            self.lsig = nn.Parameter(torch.tensor(0.0), requires_grad=fit_scale)
+        self.register_buffer("delta_list", delta_list)
 
     def loss(self, treatment, density_estimator, z, shift_type):
         losses = []
@@ -60,8 +64,11 @@ class RatioRegularizer(nn.Module):
         tgts = torch.cat([torch.ones_like(treatment), torch.zeros_like(treatment)])
 
         # make loss and return
-        sig = self.lsig.clamp(max=10).exp()
-        const = 1 / (1e-10 + sig.pow(2))
+        if self.multiscale:
+            sig = self.lsig[ix].clamp(max=10).exp()
+        else:
+            sig = self.lsig.clamp(max=10).exp()
+        const = 1.0 / (1e-10 + sig**2)
         loss = const * F.binary_cross_entropy_with_logits(logits, tgts)
         losses.append(loss)
 
@@ -73,10 +80,14 @@ class RatioRegularizer(nn.Module):
 
 
 class VarianceRegularizer(nn.Module):
-    def __init__(self, delta_list) -> None:
+    def __init__(self, delta_list, multiscale: bool = True, fit_scale: bool = True) -> None:
         super().__init__()
-        self.lsig = nn.Parameter(torch.tensor(0.0))
-        self.delta_list = delta_list
+        self.register_buffer("multiscale", torch.tensor(multiscale))
+        if multiscale:
+            self.lsig = nn.Parameter(torch.zeros_like(delta_list), requires_grad=fit_scale)
+        else:
+            self.lsig = nn.Parameter(torch.tensor(0.0), requires_grad=fit_scale)
+        self.register_buffer("delta_list", delta_list)
 
     def loss(self, treatment, density_estimator, z, shift_type):
         losses = []
@@ -98,8 +109,11 @@ class VarianceRegularizer(nn.Module):
         approx_variance = 0.5 * logits.diff().pow(2).mean()
 
         # make loss and return
-        sig = self.lsig.clamp(max=10).exp()
-        const = 1 / (1e-10 + sig.pow(2))
+        if self.multiscale:
+            sig = self.lsig[ix].clamp(max=10).exp()
+        else:
+            sig = self.lsig.clamp(max=10).exp()
+        const = 1.0 / (1e-10 + sig**2)
         loss = const * approx_variance
         losses.append(loss)
 

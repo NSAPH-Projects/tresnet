@@ -6,8 +6,9 @@ simu1/
 
 # Local for mauricio; just accept notebooks in this folder
 !notebooks/*.ipynb
+results*
 
-# Byte-compiled / optimized / DLL files
+# Byte-compiled / osptimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -136,5 +137,4 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-results/
 .vscode/

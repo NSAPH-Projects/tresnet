@@ -33,17 +33,21 @@ def main(args: argparse.Namespace) -> None:
     model._initialize_weights()
     optim_params = [{"params": model.parameters(), "weight_decay": args.wd}]
 
-    # make regularizing layers if required
+    # set regularizations if other flags require it
     if args.combo_reg:
         args.var_reg = True
         args.ratio_reg = True
 
+    if not args.erm:
+        args.var_reg = True
+
+    # make regularizing layers if required
     if args.var_reg:
-        var_reg = ratios.VarianceRegularizer(delta_list)
+        var_reg = ratios.VarianceRegularizer(delta_list, args.reg_multiscale)
         optim_params.append({"params": var_reg.parameters()})
 
     if args.ratio_reg:
-        ratio_reg = ratios.RatioRegularizer(delta_list)
+        ratio_reg = ratios.RatioRegularizer(delta_list, args.reg_multiscale, fit_scale=args.erm)
         optim_params.append({"params": ratio_reg.parameters()})
 
     # make optimizer
@@ -76,8 +80,9 @@ def main(args: argparse.Namespace) -> None:
 
             # 1. negative loglikelihood loss
             density_negll = -probs.log().mean()
-            total_loss = total_loss + density_negll
             losses["density_negll"].append(density_negll.item())
+            if args.erm:
+                total_loss = total_loss + density_negll
 
             # 2. regularization losses
             if args.var_reg:
@@ -154,17 +159,17 @@ def main(args: argparse.Namespace) -> None:
                 exp_dir = f"{'-'.join([s1, s2])}/{args.seed:02d}"
 
                 # save estimated curve dataset
-                results_path = f"results/{args.dataset}/{exp_dir}/curve.csv"
+                results_path = f"{args.rdir}/{args.dataset}/{exp_dir}/curve.csv"
                 os.makedirs(os.path.dirname(results_path), exist_ok=True)
                 df.round(4).to_csv(results_path, index=False)
 
                 # save experiment config
-                config_path = f"results/{args.dataset}/{exp_dir}/config.yaml"
+                config_path = f"{args.rdir}/{args.dataset}/{exp_dir}/config.yaml"
                 with open(config_path, "w") as io:
                     yaml.safe_dump(vars(args), io)
 
                 # save metrics
-                metrics_path = f"results/{args.dataset}/{exp_dir}/metrics.yaml"
+                metrics_path = f"{args.rdir}/{args.dataset}/{exp_dir}/metrics.yaml"
                 metrics = {k: float(np.mean(v)) for k, v in losses.items()}
                 metrics["last_saved_epoch"] = epoch
                 metrics["@0.1"] = float(errors[0.1])
@@ -182,17 +187,20 @@ if __name__ == "__main__":
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--num_grid", default=10, type=int)
     parser.add_argument("--dataset", default="ihdp-N", type=str, choices=DATASETS)
+    parser.add_argument("--rdir", default="results", type=str)
     parser.add_argument("--opt", default="adam", type=str, choices=("adam", "sgd"))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
     parser.add_argument("--n_epoch", default=10000, type=int)
-    parser.add_argument("--wd", default=1e-6, type=int)
+    parser.add_argument("--wd", default=5e-3, type=float)
     parser.add_argument("--silent", default=False, action="store_true")
 
     # regularizations available
+    parser.add_argument("--no_erm", default=True, dest="erm", action="store_false")
     parser.add_argument("--var_reg", default=False, action="store_true")
     parser.add_argument("--ratio_reg", default=False, action="store_true")
     parser.add_argument("--combo_reg", default=False, action="store_true")
+    parser.add_argument("--reg_multiscale", default=False, action="store_true")
 
     args = parser.parse_args()
     main(args)
