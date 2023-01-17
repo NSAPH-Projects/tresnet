@@ -1,10 +1,13 @@
+import random
+import os
+
+import pandas as pd
+import numpy as np
+
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch import cat, stack
 from torch import Tensor
-import pandas as pd
-import numpy as np
-import random
 
 
 DATASETS = (
@@ -32,7 +35,7 @@ class DatasetFromMatrix(Dataset):
     def __len__(self):
         return self.num_data
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict:
         if torch.is_tensor(idx):
             idx = idx.tolist()
         sample = self.data_matrix[idx, :]
@@ -83,7 +86,12 @@ def load_data(
         test_ix = torch.arange(n_train, n_train + n_test)
         D = {"x": x, "t": t, "train_ix": train_ix, "test_ix": test_ix}
         return D
+
     elif dataset == "ihdp-N":  # IHDP modification in VCNet (Niet et al., 2021)
+
+        if not os.path.exists("dataset/ihdp/ihdp.csv"):
+            raise FileNotFoundError("The dataset path does not exist")
+
         x = pd.read_csv("dataset/ihdp/ihdp.csv", usecols=range(2, 27))
         x = torch.FloatTensor(x.to_numpy())
         n = x.shape[0]
@@ -106,13 +114,62 @@ def load_data(
             - 2.0
         )
         t = (logits + 0.5 * torch.randn(n)).sigmoid()
+
+        #! Dimeji: should we be randomly permuting the indexes before then selecting training and test?
         train_ix = torch.arange(0, 473)
         test_ix = torch.arange(473, len(t))
         D = {"x": x, "t": t, "train_ix": train_ix, "test_ix": test_ix}
         return D
 
     elif dataset == "news-N":  # News modification in VCNet (Niet et al., 2021)
-        raise NotImplementedError
+
+        # Load preprocessed data from numpy file
+        news = np.load("dataset/news/news_preprocessed.npy")
+        news = torch.FloatTensor(news)
+
+        # Normalize the data
+        max_freq = news.amax(0)
+        news = news / max_freq
+
+        # Get shape variables
+        n_samples = data.shape[0]
+        n_features = data.shape[1]
+
+        #! Dimeji: We have to optimize this.
+        #! Dimeji: Currently we are running this pseudorandom number generator here and in the outcome function
+        np.random.seed(5)
+        v1 = np.random.randn(num_feature)
+        v1_stack = torch.FloatTensor(
+            [v1 / np.sqrt(np.sum(v1**2)) for _ in range(num_samples)]
+        )
+        v2 = np.random.randn(num_feature)
+        v2_stack = torch.FloatTensor(
+            [v2 / np.sqrt(np.sum(v2**2)) for _ in range(num_samples)]
+        )
+        v3 = np.random.randn(num_feature)
+        v3_stack = torch.FloatTensor(
+            [v3 / np.sqrt(np.sum(v3**2)) for _ in range(num_samples)]
+        )
+
+        alpha = 2
+        tt = ((torch.mul(v3_stack, news)).sum(1)) / (
+            (2.0 * torch.mul(v2_stack, news)).sum(1)
+        )
+        betas = (alpha - 1) / tt + 2 - alpha
+        betas = np.abs(betas) + 0.0001
+        treatment = torch.FloatTensor(
+            [np.random.beta(alpha, beta, 1)[0] for beta in betas]
+        )
+
+        #! Dimeji: A random permutation has been applied here to the indxes of the data
+        idx_list = torch.randperm(num_data)
+        train_ix = idx_list[0:2000]
+        test_ix = idx_list[2000:]
+
+        D = {"x": news, "t": treatment, "train_ix": train_ix, "test_ix": test_ix}
+
+        return D
+
     elif dataset == "sim-B":  # Simulated data in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
     elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
@@ -162,7 +219,36 @@ def outcome(t: Tensor, x: Tensor, dataset: str, noise: Tensor | None = None) -> 
         y = mu + noise
         return y, noise
     elif dataset == "news-N":  # News modification in VCNet (Niet et al., 2021)
-        raise NotImplementedError
+
+        np.random.seed(5)
+        v1 = np.random.randn(num_feature)
+        v1_stack = torch.FloatTensor(
+            [v1 / np.sqrt(np.sum(v1**2)) for _ in range(num_samples)]
+        )
+        v2 = np.random.randn(num_feature)
+        v2_stack = torch.FloatTensor(
+            [v2 / np.sqrt(np.sum(v2**2)) for _ in range(num_samples)]
+        )
+        v3 = np.random.randn(num_feature)
+        v3_stack = torch.FloatTensor(
+            [v3 / np.sqrt(np.sum(v3**2)) for _ in range(num_samples)]
+        )
+
+        A = ((torch.mul(v2_stack, news)).sum(1)) / ((torch.mul(v3_stack, news)).sum(1))
+        res1 = torch.clamp(torch.exp(0.3 * 3.14159 * A - 1), min=-2, max=2)
+        res2 = 20.0 * ((torch.mul(v1_stack, news)).sum(1))
+        res = (
+            2
+            * (4 * (treatment - 0.5) ** 2 * np.sin(0.5 * 3.14159 * treatment))
+            * (res1 + res2)
+        )
+
+        if noise is None:
+            noise = 0.5 * torch.randn_like(t)
+        y = res + noise
+        return y, noise
+
+        return
     elif dataset == "sim-B":  # Simulated data in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
     elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
