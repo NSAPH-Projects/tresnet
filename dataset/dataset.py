@@ -9,6 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch import cat, stack
 from torch import Tensor
 
+from typing import Optional, Tuple, Dict
 
 DATASETS = (
     "sim-N",  # simu1 simulated data in VCNet (Nie et al., 2021)
@@ -65,10 +66,12 @@ def set_seed(seed: int):
 
 
 def load_data(
-    dataset: str, n_train: int | None = None, n_test: int | None = None
-) -> tuple[int]:
+    dataset: str, n_train: Optional[int] = None, n_test: Optional[int] = None
+) -> Tuple[int]:
     """n_train, n_test only useful for simulated datasets"""
     if dataset == "sim-N":  # simu1 simulated data in VCNet (Nie et al., 2021)
+
+        assert n_train is not None, "n_train cannot be None for simulated data"
         n = n_train + n_test
         x = torch.rand((n, 6))
         x1, x2, x3, x4, x5, x6 = [x[:, j] for j in range(6)]
@@ -132,23 +135,23 @@ def load_data(
         news = news / max_freq
 
         # Get shape variables
-        n_samples = data.shape[0]
-        n_features = data.shape[1]
+        n_samples = news.shape[0]
+        n_features = news.shape[1]
 
         #! Dimeji: We have to optimize this.
         #! Dimeji: Currently we are running this pseudorandom number generator here and in the outcome function
         np.random.seed(5)
-        v1 = np.random.randn(num_feature)
+        v1 = np.random.randn(n_features)
         v1_stack = torch.FloatTensor(
-            [v1 / np.sqrt(np.sum(v1**2)) for _ in range(num_samples)]
+            [v1 / np.sqrt(np.sum(v1**2)) for _ in range(n_samples)]
         )
-        v2 = np.random.randn(num_feature)
+        v2 = np.random.randn(n_features)
         v2_stack = torch.FloatTensor(
-            [v2 / np.sqrt(np.sum(v2**2)) for _ in range(num_samples)]
+            [v2 / np.sqrt(np.sum(v2**2)) for _ in range(n_samples)]
         )
-        v3 = np.random.randn(num_feature)
+        v3 = np.random.randn(n_features)
         v3_stack = torch.FloatTensor(
-            [v3 / np.sqrt(np.sum(v3**2)) for _ in range(num_samples)]
+            [v3 / np.sqrt(np.sum(v3**2)) for _ in range(n_samples)]
         )
 
         alpha = 2
@@ -162,7 +165,7 @@ def load_data(
         )
 
         #! Dimeji: A random permutation has been applied here to the indxes of the data
-        idx_list = torch.randperm(num_data)
+        idx_list = torch.randperm(n_samples)
         train_ix = idx_list[0:2000]
         test_ix = idx_list[2000:]
 
@@ -190,7 +193,9 @@ def support(dataset: str) -> str:
         return "real"
 
 
-def outcome(t: Tensor, x: Tensor, dataset: str, noise: Tensor | None = None) -> Tensor:
+def outcome(
+    t: Tensor, x: Tensor, dataset: str, noise: Optional[Tensor] = None
+) -> Tensor:
     if dataset == "sim-N":  # simu1 simulated data in VCNet (Nie et al., 2021)
         x1, x3, x4, x6 = [x[:, j] for j in [0, 2, 3, 5]]
         mu = ((t - 0.5) * 2 * torch.pi).cos() * (
@@ -220,28 +225,29 @@ def outcome(t: Tensor, x: Tensor, dataset: str, noise: Tensor | None = None) -> 
         return y, noise
     elif dataset == "news-N":  # News modification in VCNet (Niet et al., 2021)
 
+        # Get shape variables
+        n_samples = x.shape[0]
+        n_features = x.shape[1]
+        news = x
+
         np.random.seed(5)
-        v1 = np.random.randn(num_feature)
+        v1 = np.random.randn(n_features)
         v1_stack = torch.FloatTensor(
-            [v1 / np.sqrt(np.sum(v1**2)) for _ in range(num_samples)]
+            [v1 / np.sqrt(np.sum(v1**2)) for _ in range(n_samples)]
         )
-        v2 = np.random.randn(num_feature)
+        v2 = np.random.randn(n_features)
         v2_stack = torch.FloatTensor(
-            [v2 / np.sqrt(np.sum(v2**2)) for _ in range(num_samples)]
+            [v2 / np.sqrt(np.sum(v2**2)) for _ in range(n_samples)]
         )
-        v3 = np.random.randn(num_feature)
+        v3 = np.random.randn(n_features)
         v3_stack = torch.FloatTensor(
-            [v3 / np.sqrt(np.sum(v3**2)) for _ in range(num_samples)]
+            [v3 / np.sqrt(np.sum(v3**2)) for _ in range(n_samples)]
         )
 
         A = ((torch.mul(v2_stack, news)).sum(1)) / ((torch.mul(v3_stack, news)).sum(1))
         res1 = torch.clamp(torch.exp(0.3 * 3.14159 * A - 1), min=-2, max=2)
         res2 = 20.0 * ((torch.mul(v1_stack, news)).sum(1))
-        res = (
-            2
-            * (4 * (treatment - 0.5) ** 2 * np.sin(0.5 * 3.14159 * treatment))
-            * (res1 + res2)
-        )
+        res = 2 * (4 * (t - 0.5) ** 2 * np.sin(0.5 * 3.14159 * t)) * (res1 + res2)
 
         if noise is None:
             noise = 0.5 * torch.randn_like(t)
@@ -265,7 +271,7 @@ def make_dataset(
     dataset: str,
     delta_list: Tensor,
     **kwargs,
-) -> dict[Tensor]:
+) -> Dict:
     """
     delta_std is the number of standard deviations to reduce from the treatment
     n_train, n_test only useful for simulated datasets
