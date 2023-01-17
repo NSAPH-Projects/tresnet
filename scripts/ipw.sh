@@ -1,7 +1,7 @@
 #!/bin/bash
 
-num_parallel=25
-num_seeds=25
+num_parallel=4
+num_seeds=4
 num_gpus=0
 
 # rdir=results

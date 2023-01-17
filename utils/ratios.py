@@ -24,24 +24,45 @@ def log_density_ratio_under_shift(
     return log_ratio
 
 
-class RatioRegularizer(nn.Module):
-    def __init__(self, delta_list, multiscale: bool = True, fit_scale: bool = True) -> None:
+class ScaledRegularizer(nn.Module):
+    def __init__(
+        self,
+        delta_list: torch.Tensor | None = None,
+        multiscale: bool = True,
+        fit_scale: bool = True,
+    ) -> None:
         super().__init__()
+        assert delta_list is not None, "provide delta list"
         self.register_buffer("multiscale", torch.tensor(multiscale))
         if multiscale:
-            self.lsig = nn.Parameter(torch.zeros_like(delta_list), requires_grad=fit_scale)
+            self.lsig = nn.Parameter(
+                torch.zeros_like(delta_list), requires_grad=fit_scale
+            )
         else:
             self.lsig = nn.Parameter(torch.tensor(0.0), requires_grad=fit_scale)
         self.register_buffer("delta_list", delta_list)
 
-    def loss(self, treatment, density_estimator, z, shift_type):
-        losses = []
+    def sig(self):
+        return self.lsig.clamp(min=-10, max=10).exp()
 
+    def prior(self):
+        return -dists.HalfCauchy(1.0).log_prob(self.sig()).sum()
+
+    def forward(self):
+        raise NotImplementedError
+
+
+class RatioRegularizer(ScaledRegularizer):
+    def __init__(self, ls=0.01, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.ls = ls
+
+    def forward(self, treatment, density_estimator, z, shift_type):
         # sample delta at random for each element
         ix = torch.randint(
             high=len(self.delta_list),
-            size=(treatment.shape[0], ),
-            device=treatment.device
+            size=(treatment.shape[0],),
+            device=treatment.device,
         )
         delta = self.delta_list[ix]
 
@@ -62,41 +83,23 @@ class RatioRegularizer(nn.Module):
         # classification targets are 1 for shifted and 0 for unshifted
         logits = torch.cat([logits_shifted, logits_unshifted])
         tgts = torch.cat([torch.ones_like(treatment), torch.zeros_like(treatment)])
+        tgts = tgts.clamp(self.ls, 1 - self.ls)
 
         # make loss and return
-        if self.multiscale:
-            sig = self.lsig[ix].clamp(max=10).exp()
-        else:
-            sig = self.lsig.clamp(max=10).exp()
-        const = 1.0 / (1e-10 + sig**2)
-        loss = const * F.binary_cross_entropy_with_logits(logits, tgts)
-        losses.append(loss)
-
-        return torch.stack(losses).sum()
-
-    def prior(self):
-        sig = self.lsig.clamp(max=10).exp()
-        return -dists.HalfCauchy(1.0).log_prob(sig).mean()
+        sig = self.sig()[ix] if self.multiscale else self.sig()
+        return (1.0 / sig**2) * F.binary_cross_entropy_with_logits(logits, tgts)
 
 
-class VarianceRegularizer(nn.Module):
-    def __init__(self, delta_list, multiscale: bool = True, fit_scale: bool = True) -> None:
-        super().__init__()
-        self.register_buffer("multiscale", torch.tensor(multiscale))
-        if multiscale:
-            self.lsig = nn.Parameter(torch.zeros_like(delta_list), requires_grad=fit_scale)
-        else:
-            self.lsig = nn.Parameter(torch.tensor(0.0), requires_grad=fit_scale)
-        self.register_buffer("delta_list", delta_list)
+class VarianceRegularizer(ScaledRegularizer):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
 
-    def loss(self, treatment, density_estimator, z, shift_type):
-        losses = []
-
+    def forward(self, treatment, density_estimator, z, shift_type):
         # sample delta at random for each element
         ix = torch.randint(
             high=len(self.delta_list),
-            size=(treatment.shape[0], ),
-            device=treatment.device
+            size=(treatment.shape[0],),
+            device=treatment.device,
         )
         delta = self.delta_list[ix]
 
@@ -109,16 +112,35 @@ class VarianceRegularizer(nn.Module):
         approx_variance = 0.5 * logits.diff().pow(2).mean()
 
         # make loss and return
-        if self.multiscale:
-            sig = self.lsig[ix].clamp(max=10).exp()
-        else:
-            sig = self.lsig.clamp(max=10).exp()
-        const = 1.0 / (1e-10 + sig**2)
-        loss = const * approx_variance
-        losses.append(loss)
+        sig = self.sig()[ix] if self.multiscale else self.sig()
+        return sig.pow(-2) * approx_variance
 
-        return torch.stack(losses).sum()
 
-    def prior(self):
-        sig = self.lsig.clamp(max=10).exp()
-        return -dists.HalfCauchy(1.0).log_prob(sig).sum()
+class PosteriorRegularizer(ScaledRegularizer):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
+    def forward(self, treatment, model, covariates, shift_type):
+        assert model.dropout > 0.0, "posterior variance regularizer only with dropout"
+
+        # sample delta at random for each element
+        ix = torch.randint(
+            high=len(self.delta_list),
+            size=(treatment.shape[0],),
+            device=treatment.device,
+        )
+        delta = self.delta_list[ix]
+
+        # draw two copies
+        log_dr = []
+        for _ in range(2):
+            z = model(treatment, covariates)["z"]
+            L = log_density_ratio_under_shift(
+                treatment, delta, model.density_estimator, z, shift_type
+            )
+            log_dr.append(L)
+        variance = 0.5 * (log_dr[1] - log_dr[0]).pow(2).mean()
+
+        # make loss and return
+        sig = self.sig()[ix] if self.multiscale else self.sig()
+        return sig.pow(-2) * variance
