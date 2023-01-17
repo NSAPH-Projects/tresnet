@@ -255,7 +255,6 @@ def outcome(
         y = res + noise
         return y, noise
 
-        return
     elif dataset == "sim-B":  # Simulated data in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
     elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
