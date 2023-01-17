@@ -3,7 +3,7 @@ from .modules import Encoder, DiscreteDensityEstimator
 
 
 class DensityNet(nn.Module):
-    def __init__(self, encoder_config, num_grids):
+    def __init__(self, encoder_config, num_grids, dropout=0.0):
         """Density estimation neural networks
 
         Args:
@@ -14,7 +14,8 @@ class DensityNet(nn.Module):
 
         super(DensityNet, self).__init__()
 
-        self.encoder = Encoder(encoder_config)
+        self.encoder = Encoder(encoder_config, dropout=dropout)
+        self.dropout = dropout
 
         density_estimator_in_dimension = encoder_config[-1][1]
 

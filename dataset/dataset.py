@@ -13,8 +13,8 @@ from typing import Optional, Tuple, Dict
 
 DATASETS = (
     "sim-N",  # simu1 simulated data in VCNet (Nie et al., 2021)
-    "ihdp-N",  # IHDP modification in VCNet (Niet et al., 2021)
-    "news-N",  # News modification in VCNet (Niet et al., 2021)
+    "ihdp-N",  # IHDP modification in VCNet (Nie et al., 2021)
+    "news-N",  # News modification in VCNet (Nie et al., 2021)
     "sim-B",  # Simulated data in SCIGAN (Bica et al., 2020)
     "news-B",  # News modification in SCIGAN (Bica et al., 2020)
     "tcga-B",  # TCGA modification in SCIGAN (Bica et al., 2020)
@@ -90,7 +90,7 @@ def load_data(
         D = {"x": x, "t": t, "train_ix": train_ix, "test_ix": test_ix}
         return D
 
-    elif dataset == "ihdp-N":  # IHDP modification in VCNet (Niet et al., 2021)
+    elif dataset == "ihdp-N":  # IHDP modification in VCNet (Nie et al., 2021)
 
         if not os.path.exists("dataset/ihdp/ihdp.csv"):
             raise FileNotFoundError("The dataset path does not exist")
@@ -105,6 +105,7 @@ def load_data(
             minval = (x[:, _]).min()
             maxval = (x[:, _]).max()
             x[:, _] = (x[:, _] - minval) / maxval
+        # x = (x - x.amin(0)) / x.amax(0)
 
         cate_idx1 = torch.tensor([3, 6, 7, 8, 9, 10, 11, 12, 13, 14])
         cate_idx2 = torch.tensor([15, 16, 17, 18, 19, 20, 21, 22, 23, 24])
@@ -281,7 +282,7 @@ def make_dataset(
 
     D = load_data(dataset, **kwargs)
     x, t, train_ix, test_ix = D["x"], D["t"], D["train_ix"], D["test_ix"]
-    y, exo_noise = outcome(t, x, dataset)
+    y, noise = outcome(t, x, dataset)
 
     train_matrix = cat([t[train_ix, None], x[train_ix], y[train_ix, None]], dim=1)
     test_matrix = cat([t[test_ix, None], x[test_ix], y[test_ix, None]], dim=1)
@@ -289,19 +290,21 @@ def make_dataset(
     # -- specific to stochastic interventions -- #
     supp = support(dataset)
 
-    if supp == "unit":
+    if supp == "unit":  # treatment in (0,1)
         delta_scale = None
-        t_cf = [t * (1 - d) for d in delta_list]
+        shifted_t = [t * (1 - d) for d in delta_list]
         shift_type = "percent"
-    elif supp == "real":
+    elif supp == "real":  # treatment in real line
         delta_scale = t.std()
-        t_cf = [t - delta_scale * d for d in delta_list]
+        shifted_t = [t - delta_scale * d for d in delta_list]
         shift_type = "subtract"
     else:
         raise NotImplementedError
 
-    # make counterfactuals and shift-response curves
-    cfs = stack([outcome(t, x, dataset, noise=exo_noise)[0] for t in t_cf], 1)
+    # make counterfactuals and shift-response functions
+    cfs = stack([outcome(tcf, x, dataset, noise=noise)[0] for tcf in shifted_t], 1)
+
+    # average the counterfactuals for value of delta
     srf_train = cfs[train_ix, :].mean(0)
     srf_test = cfs[test_ix, :].mean(0)
 

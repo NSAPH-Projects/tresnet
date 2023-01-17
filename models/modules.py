@@ -5,7 +5,7 @@ import numpy
 
 
 class Encoder(nn.Module):
-    def __init__(self, layer_params):
+    def __init__(self, layer_params, dropout=0.0):
         """The encoder takes the treatment and covariates and map them to both an
         intermediate vector Z
 
@@ -23,7 +23,7 @@ class Encoder(nn.Module):
             layers.append(
                 nn.Linear(in_features=param[0], out_features=param[1], bias=param[2])
             )
-            layers.append(nn.ReLU(inplace=True))
+            layers.extend([nn.ReLU(inplace=True), nn.Dropout(dropout)])
 
         self.encoder = nn.Sequential(*layers)
 

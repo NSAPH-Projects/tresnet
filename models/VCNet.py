@@ -6,7 +6,7 @@ import numpy
 
 class VCNet(nn.Module):
     def __init__(
-        self, encoder_config, num_grids, pred_head_config, spline_degree, spline_knots
+        self, encoder_config, num_grids, pred_head_config, spline_degree, spline_knots, dropout=0.0
     ):
         """Varying coefficient neural networks
 
@@ -18,7 +18,8 @@ class VCNet(nn.Module):
 
         super(VCNet, self).__init__()
 
-        self.encoder = Encoder(encoder_config)
+        self.encoder = Encoder(encoder_config, dropout=dropout)
+        self.dropout = dropout
 
         density_estimator_in_dimension = encoder_config[-1][1]
 

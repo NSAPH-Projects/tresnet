@@ -4,7 +4,11 @@
 .DS_store
 simu1/
 
-# Byte-compiled / optimized / DLL files
+# Local for mauricio; just accept notebooks in this folder
+!notebooks/*.ipynb
+results*
+
+# Byte-compiled / osptimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -133,5 +137,4 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-results/
 .vscode/
