@@ -1,14 +1,17 @@
 #!/bin/bash
 
-num_parallel=4
-num_seeds=4
+num_parallel=24
+num_seeds=24
 num_gpus=0
 
 # rdir=results
-flags="--wd 5e-3 --n_epoch 800"
+flags="--n_grid 25 --reg_multiscale"
+# flags="--batch_size 32"
 
-datasets=("ihdp-N sim-N")
-regularizations=("" "--combo_reg" "--var_reg" "--ratio_reg")
+
+# datasets=("news-N")
+datasets=("news-N" "sim-N" "ihdp-N")
+regularizations=("--combo_reg" "--var_reg" "--ratio_reg" "--pos_reg --dropout 0.25" "--ratio_reg --dropout 0.25" "--combo_reg --pos_reg --dropout 0.25" "--dropout 0.25" "")
 
 # regularizations=("--var_reg" "--ratio_reg")
 # regularizations=("" "--combo_reg")
@@ -25,7 +28,7 @@ do
                 s=$((num_parallel*i + c))
                 # we use CUDA_VISIBLE_DEVICES in case of gpus
                 if [ $num_gpus -gt 0 ]; then export CUDA_VISIBLE_DEVICES=$((c % num_gpus)); fi
-                python main_ipw_si.py --seed=$s --dataset $dset ${reg} --rdir "\"results ${flags}\"" ${flags} --silent &
+                python main_ipw_si.py --seed=$s --dataset ${dset} ${reg} --rdir "results ${flags}" ${flags} --silent &
             done
             wait
         done
