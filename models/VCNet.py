@@ -41,7 +41,7 @@ class VCNet(nn.Module):
         return {
             "z": z,
             "prob_score": probability_score,
-            "predicted_outcome": predicted_outcome,
+            "predicted_outcome": predicted_outcome.squeeze(1),
         }
 
     def _initialize_weights(self):

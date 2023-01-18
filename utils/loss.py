@@ -1,4 +1,5 @@
 import torch
+from .ratios import log_density_ratio_under_shift
 
 
 def criterion(
@@ -41,7 +42,7 @@ def prediction_and_likelihood_loss(model_output, true_outcome, alpha=0.5, epsilo
 
 
 def functional_targeted_reg_loss(
-    model_output, target_reg_coeff, true_outcome, beta=1.0, epsilon=1e-6
+    model_output, target_reg_coeff, true_outcome, beta=1.0,
 ):
 
     return (
@@ -52,9 +53,34 @@ def functional_targeted_reg_loss(
                 - model_output["predicted_outcome"].squeeze()
                 - (
                     target_reg_coeff.squeeze()
-                    / (model_output["prob_score"].squeeze() + epsilon)
+                    / (model_output["prob_score"].squeeze() + 1e-6)
                 )
             )
             ** 2
         ).mean()
     )
+
+
+def shift_targeted_reg_loss(
+    model_output,
+    target_reg_coeff,
+    log_density_ratio,
+    true_outcome,
+    beta=1.0,
+):
+    return (
+        beta
+        * (
+            (
+                true_outcome.squeeze()
+                - model_output["predicted_outcome"].squeeze()
+                - (
+                    target_reg_coeff.squeeze()
+                    * log_density_ratio.clamp(-10.0, 10.0).exp()
+                    / (model_output["prob_score"].squeeze() + 1-6)
+                )
+            )
+            ** 2
+        ).mean()
+    )
+

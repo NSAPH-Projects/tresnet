@@ -4,22 +4,39 @@ import torch.nn.functional as F
 import torch.distributions as dists
 
 
+def inverse_shift(treatment, delta, shift_type):
+    assert shift_type in ("subtract", "percent")
+    if shift_type == "subtract":
+        t_delta = treatment + delta
+        log_det = 0
+    elif shift_type == "percent":
+        t_delta = treatment / (1 - delta)
+        log_det = -torch.log(1 - delta)
+    else:
+        raise NotImplementedError(shift_type)
+    return t_delta, log_det
+
+
+def shift(treatment, delta, shift_type):
+    assert shift_type in ("subtract", "percent")
+    if shift_type == "subtract":
+        t_delta = treatment - delta
+    elif shift_type == "percent":
+        t_delta = treatment * (1 - delta)
+    else:
+        raise NotImplementedError(shift_type)
+    return t_delta
+
+
 def log_density_ratio_under_shift(
     treatment, delta, density_estimator, z, shift_type, eps=1e-10
 ):
     """z is the hidden vector for efficiency,
     eps just avoids nan on the log"""
-    assert shift_type in ("subtract", "percent")
-    if shift_type == "subtract":
-        t1 = treatment + delta
-        numer = density_estimator(t1, z)
-    elif shift_type == "percent":
-        t1 = treatment / (1 - delta)
-        numer = (1 - delta) * density_estimator(t1, z)
-    else:
-        raise NotImplementedError(shift_type)
+    t_delta, log_det = inverse_shift(treatment, delta, shift_type)
+    numer = density_estimator(t_delta, z)
     denom = density_estimator(treatment, z)
-    log_ratio = torch.log(eps + numer) - torch.log(eps + denom)
+    log_ratio = torch.log(eps + numer)  - log_det - torch.log(eps + denom)
 
     return log_ratio
 
@@ -67,10 +84,7 @@ class RatioRegularizer(ScaledRegularizer):
         delta = self.delta_list[ix]
 
         # make a pseudo transformed treatment
-        if shift_type == "subtract":
-            shifted = treatment - delta
-        elif shift_type == "percent":
-            shifted = treatment * (1 - delta)
+        shifted = shift(treatment, delta, shift_type)
 
         # obtain density ratio logits for shited and normal
         logits_shifted = log_density_ratio_under_shift(
