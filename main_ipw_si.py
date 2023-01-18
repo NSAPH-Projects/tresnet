@@ -20,8 +20,8 @@ def main(args: argparse.Namespace) -> None:
     dev = torch.cuda if torch.cuda.is_available() else "cpu"
 
     # these are the shifting values use in the srf curve
-    steps = 10
-    delta_list = torch.linspace(0.5 / steps, 0.5, steps=steps)
+    delta_steps = 10
+    delta_list = torch.linspace(0.5 / delta_steps, 0.5, steps=delta_steps)
 
     # make dataset from available options
     D = make_dataset(args.dataset, delta_list, n_train=args.n_train, n_test=args.n_test)
@@ -32,7 +32,7 @@ def main(args: argparse.Namespace) -> None:
     # make neural network model
     density_estimator_config = [(input_dim, 50, 1), (50, 50, 1)]
     model = DensityNet(
-        density_estimator_config, args.num_grid, dropout=args.dropout
+        density_estimator_config, args.n_grid, dropout=args.dropout
     ).to(dev)
     density_head = model.density_estimator
     model._initialize_weights()
@@ -77,9 +77,9 @@ def main(args: argparse.Namespace) -> None:
         )
 
     # training loop
-    train_loader = get_iter(train_matrix, batch_size=500, shuffle=False)
+    train_loader = get_iter(train_matrix, batch_size=args.batch_size, shuffle=False)
 
-    for epoch in range(args.n_epoch):
+    for epoch in range(args.n_epochs):
         # dict to store all the losses per batch
         losses = defaultdict(lambda: deque(maxlen=len(train_loader)))
 
@@ -231,13 +231,14 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", default=0, type=int)
-    parser.add_argument("--num_grid", default=10, type=int)
-    parser.add_argument("--dataset", default="sim-N", type=str, choices=DATASETS)
+    parser.add_argument("--dataset", default="ihdp-N", type=str, choices=DATASETS)
     parser.add_argument("--rdir", default="results", type=str)
     parser.add_argument("--opt", default="sgd", type=str, choices=("adam", "sgd"))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
-    parser.add_argument("--n_epoch", default=10000, type=int)
+    parser.add_argument("--n_epochs", default=5000, type=int)
+    parser.add_argument("--batch_size", default=32, type=int)
+    parser.add_argument("--n_grid", default=10, type=int)
     parser.add_argument("--wd", default=5e-3, type=float)
     parser.add_argument("--silent", default=False, action="store_true")
     parser.add_argument("--dropout", default=0.0, type=float)
@@ -249,7 +250,7 @@ if __name__ == "__main__":
     parser.add_argument("--combo_reg", default=False, action="store_true")
     parser.add_argument("--pos_reg", default=False, action="store_true")
     parser.add_argument(
-        "--no_fit_ratio_scale", dest="fit_ratio_scale", default=False, action="store_true"
+        "--no_fit_ratio_scale", dest="fit_ratio_scale", default=True, action="store_false"
     )
     parser.add_argument("--reg_multiscale", default=False, action="store_true")
 

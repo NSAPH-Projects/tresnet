@@ -78,9 +78,10 @@ class RatioRegularizer(ScaledRegularizer):
         # sample delta at random for each element
         ix = torch.randint(
             high=len(self.delta_list),
-            size=(treatment.shape[0],),
+            size=(treatment.shape[0], ),
             device=treatment.device,
         )
+        # make it so that two in a row are from the same delta
         delta = self.delta_list[ix]
 
         # make a pseudo transformed treatment
@@ -100,8 +101,9 @@ class RatioRegularizer(ScaledRegularizer):
         tgts = tgts.clamp(self.ls, 1 - self.ls)
 
         # make loss and return
-        sig = self.sig()[ix] if self.multiscale else self.sig()
-        return (1.0 / sig**2) * F.binary_cross_entropy_with_logits(logits, tgts)
+        sig = self.sig()[torch.cat([ix, ix])] if self.multiscale else self.sig()
+        ce_loss = F.binary_cross_entropy_with_logits(logits, tgts, reduction='none')
+        return (sig.pow(-1) * ce_loss).mean()
 
 
 class VarianceRegularizer(ScaledRegularizer):
@@ -112,22 +114,27 @@ class VarianceRegularizer(ScaledRegularizer):
         # sample delta at random for each element
         ix = torch.randint(
             high=len(self.delta_list),
-            size=(treatment.shape[0],),
+            size=(treatment.shape[0] // 2,),
             device=treatment.device,
         )
-        delta = self.delta_list[ix]
+        if len(treatment) % 2 == 1:
+            treatment = treatment[:-1]
+            z = z[:-1]
+
+        # make it so that two in a row have the same delta
+        delta = torch.stack([self.delta_list[ix]] * 2, dim=1).view(-1)
 
         logits = log_density_ratio_under_shift(
             treatment, delta, density_estimator, z, shift_type
         )
 
-        # minimizing the differnces between contiguous observations
+        # minimizing the differnces between two observations
         # is equivalent to variance minimization using u-statistics
-        approx_variance = 0.5 * logits.diff().pow(2).mean()
+        approx_variance = 0.5 * (logits[::2] - logits[1::2]).pow(2)
 
         # make loss and return
         sig = self.sig()[ix] if self.multiscale else self.sig()
-        return sig.pow(-2) * approx_variance
+        return (sig.pow(-1) * approx_variance).mean()
 
 
 class PosteriorRegularizer(ScaledRegularizer):
@@ -153,8 +160,8 @@ class PosteriorRegularizer(ScaledRegularizer):
                 treatment, delta, model.density_estimator, z, shift_type
             )
             log_dr.append(L)
-        variance = 0.5 * (log_dr[1] - log_dr[0]).pow(2).mean()
+        variance = 0.5 * (log_dr[1] - log_dr[0]).pow(2)
 
         # make loss and return
         sig = self.sig()[ix] if self.multiscale else self.sig()
-        return sig.pow(-2) * variance
+        return (sig.pow(-1) * variance).mean()
