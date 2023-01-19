@@ -236,7 +236,7 @@ if __name__ == "__main__":
     parser.add_argument("--opt", default="sgd", type=str, choices=("adam", "sgd"))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
-    parser.add_argument("--n_epochs", default=5000, type=int)
+    parser.add_argument("--n_epochs", default=10000, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--n_grid", default=10, type=int)
     parser.add_argument("--wd", default=5e-3, type=float)

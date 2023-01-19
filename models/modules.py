@@ -63,8 +63,9 @@ class DiscreteDensityEstimator(nn.Module):
 
         out_dimension = num_grids + 1
 
+        #! Mauricio Bias is not required when using softmax
         self.fc = nn.Linear(
-            in_features=in_dimension, out_features=out_dimension, bias=bias
+            in_features=in_dimension, out_features=out_dimension, bias=False # bias
         )
         self.softmax = nn.Softmax(dim=1)
 

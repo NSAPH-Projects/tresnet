@@ -29,14 +29,14 @@ def main(args: argparse.Namespace) -> None:
     s5 = f"erm_{int(args.erm)}"
     exp_dir = f"{'-'.join([s1, s2, s3, s4, s5])}/{args.seed:02d}"
     os.makedirs(f"{args.rdir}/{args.dataset}/{exp_dir}", exist_ok=True)
-    
+
     # these are the shifting values use in the srf curve
     steps = 10
-    delta_list = torch.linspace(0.5 / steps, 0.5, steps=steps)
+    delta_list = torch.linspace(0.5 / steps, 0.5, steps=steps).to(dev)
 
     # make dataset from available options
     D = make_dataset(args.dataset, delta_list, n_train=args.n_train, n_test=args.n_test)
-    train_matrix = D["train_matrix"]
+    train_matrix = D["train_matrix"].to(dev)
     shift_type = D["shift_type"]
     n, input_dim = train_matrix.shape[0], train_matrix.shape[1] - 2
 
@@ -69,7 +69,7 @@ def main(args: argparse.Namespace) -> None:
     if args.var_reg:
         var_reg = ratios.VarianceRegularizer(
             delta_list=delta_list, multiscale=args.reg_multiscale
-        )
+        ).to(dev)
         optim_params.append({"params": var_reg.parameters()})
 
     if args.ratio_reg:
@@ -77,36 +77,40 @@ def main(args: argparse.Namespace) -> None:
             delta_list=delta_list,
             multiscale=args.reg_multiscale,
             fit_scale=args.fit_ratio_scale,
-        )
+        ).to(dev)
         optim_params.append({"params": ratio_reg.parameters()})
 
     if args.pos_reg:
         pos_reg = ratios.PosteriorRegularizer(
             delta_list=delta_list,
             multiscale=args.reg_multiscale,
-        )
+        ).to(dev)
         optim_params.append({"params": pos_reg.parameters()})
 
-    if args.tr_discrete:
-        targeted_regularizer = torch.tensor(
-            torch.zeros_like(delta_list), requires_grad=True
-        ).to(dev)
+    if args.tr == "discrete":
+        targeted_regularizer = torch.zeros_like(delta_list)
         if args.tr_reg:
-            optim_params.append({"params": targeted_regularizer})
-    else:
+            targeted_regularizer.requires_grad_(True)
+            optim_params.append({"params": targeted_regularizer, "lr": 1e-5, "weight_decay": 0.0})
+    elif args.tr == "vc":
         targeted_regularizer_model = TargetedRegularizerCoeff(
             degree=2,
             knots=delta_list[::2],
-        )
+        ).to(dev)
         if args.tr_reg:
-            optim_params.append({"params": targeted_regularizer_model.parameters()})
+            optim_params.append(
+                {"params": targeted_regularizer_model.parameters(), "lr": 1e-5, "weight_decay": 0.0}
+            )
+        else:
+            for p in targeted_regularizer_model.parameters():
+                p.requires_grad_(False)
 
     # make optimizer
     if args.opt == "adam":
-        optimizer = torch.optim.Adam(optim_params, lr=0.001)
+        optimizer = torch.optim.Adam(optim_params, lr=3e-4)
     elif args.opt == "sgd":
         optimizer = torch.optim.SGD(
-            optim_params, lr=0.0001, momentum=0.9, nesterov=True
+            optim_params, lr=3e-5, momentum=0.9, nesterov=True
         )
 
     # training loop
@@ -147,9 +151,9 @@ def main(args: argparse.Namespace) -> None:
             # make perturbed predictor for random delta
             ix = torch.randint(0, len(delta_list), size=(t.shape[0],), device=dev)
             random_delta = delta_list[ix]
-            if args.tr_discrete:
+            if args.tr == "discrete":
                 eps = targeted_regularizer[ix]
-            else:
+            elif args.tr == "vc":
                 eps = targeted_regularizer_model(random_delta)
             ratio = ratios.log_density_ratio_under_shift(
                 treatment=t,
@@ -160,12 +164,14 @@ def main(args: argparse.Namespace) -> None:
             )
             ratio = ratio.clamp(-10, 10).exp()
             ratio_ = ratio.detach() if args.detach_ratio else ratio
-            if args.pert_mode == "original":
+            if args.pert == "original":
                 y_pert = y_hat + eps * ratio_
                 tr_loss = F.mse_loss(y_pert, y)
-            elif args.pert_mode == "simple":
+            elif args.pert == "simple":
                 y_pert = y_hat + eps
-                tr_loss = (ratio_ * (y_pert - y).pow(2)).sum() / ratio_.sum()
+                if args.ratio_normalize:
+                    ratio_ = ratio_ / ratio_.sum()
+                tr_loss = (ratio_ * (y_pert - y).pow(2)).mean()
             losses["tr_loss"].append(tr_loss.item())
             if args.tr_reg:
                 total_loss = total_loss + tr_loss
@@ -214,8 +220,8 @@ def main(args: argparse.Namespace) -> None:
                     df[part + "_truth"] = srf
 
                     # dictionaries for all kind of estimates
-                    ipw_estims = []
-                    ipw_errors = []
+                    # ipw_estims = []
+                    # ipw_errors = []
                     aipw_estims = []
                     aipw_errors = []
                     # tmle_estims = []
@@ -236,29 +242,30 @@ def main(args: argparse.Namespace) -> None:
                             shift_type=shift_type,
                         )
                         ratio = log_ratio.clamp(-10, 10).exp()
-                        ratio = ratio / ratio.sum()
-                        estim = (ratio * y).sum().item() / ratio.sum()
+                        if args.ratio_normalize:
+                            ratio = ratio / ratio.sum()
+                        estim = (ratio * y).sum().item()
                         error = (estim - truth).item()
-                        ipw_estims.append(estim)
-                        ipw_errors.append(error)
+                        # ipw_estims.append(estim)
+                        # ipw_errors.append(error)
 
                         # A-IPTW estimates
                         t_delta = ratios.shift(t, d, shift_type)
-                        y_delta = model(t_delta, x)['predicted_outcome']
-                        y_hat = model(t, x)['predicted_outcome']
+                        y_delta = model(t_delta, x)["predicted_outcome"]
+                        y_hat = model(t, x)["predicted_outcome"]
                         estim = (ratio * (y - y_hat)).sum() + y_delta.mean()
                         error = (estim - truth).item()
                         aipw_estims.append(estim)
                         aipw_errors.append(error)
 
                         # Targeted Regularization
-                        if args.tr_discrete:
+                        if args.tr == "discrete":
                             eps = targeted_regularizer[j]
-                        else:
+                        elif args.tr == "vc":
                             eps = targeted_regularizer_model(torch.full_like(t, d))
-                        if args.pert_mode == "original":
+                        if args.pert == "original":
                             y_pert_delta = y_delta + eps * ratio
-                        elif args.pert_mode == "simple":
+                        elif args.pert == "simple":
                             y_pert_delta = y_delta + eps
                         estim = y_pert_delta.mean()
                         error = (estim - truth).item()
@@ -266,8 +273,8 @@ def main(args: argparse.Namespace) -> None:
                         tr_errors.append(error)
 
                     # add estimation error as columns of result dataframe
-                    df[part + "_ipw_estim"] = ipw_estims
-                    df[part + "_ipw_error"] = ipw_errors
+                    # df[part + "_ipw_estim"] = ipw_estims
+                    # df[part + "_ipw_error"] = ipw_errors
                     df[part + "_aipw_estim"] = aipw_estims
                     df[part + "_aipw_error"] = aipw_errors
                     df[part + "_tr_estim"] = tr_estims
@@ -277,17 +284,25 @@ def main(args: argparse.Namespace) -> None:
                     # for computation
                     # TODO, separate test and train metrics
                     metrics = {k: float(np.mean(v)) for k, v in losses.items()}
-                    metrics["ipw_curve_error"] = float(np.square(ipw_errors).mean() ** 0.5)
-                    metrics["aipw_curve_error"] = float(np.square(aipw_errors).mean() ** 0.5)
-                    metrics["tr_curve_error"] = float(np.square(tr_errors).mean() ** 0.5)
-                    metrics_path = f"{args.rdir}/{args.dataset}/{exp_dir}/metrics_{part}.yaml"
+                    # metrics["ipw_curve_error"] = float(
+                    #     np.square(ipw_errors).mean() ** 0.5
+                    # )
+                    metrics["aipw_curve_error"] = float(
+                        np.square(aipw_errors).mean() ** 0.5
+                    )
+                    metrics["tr_curve_error"] = float(
+                        np.square(tr_errors).mean() ** 0.5
+                    )
+                    metrics_path = (
+                        f"{args.rdir}/{args.dataset}/{exp_dir}/metrics_{part}.yaml"
+                    )
                     metrics["last_saved_epoch"] = epoch
                     with open(metrics_path, "w") as io:
                         yaml.safe_dump(metrics, io)
 
                     if not args.silent:
                         print(f"SRF {part}:")
-                        print(f"  ipw curve: {metrics['ipw_curve_error']:.4f}")
+                        # print(f"  ipw curve: {metrics['ipw_curve_error']:.4f}")
                         print(f"  aipw curve: {metrics['aipw_curve_error']:.4f}")
                         print(f"  tr curve: {metrics['tr_curve_error']:.4f}")
 
@@ -324,17 +339,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--n_grid", default=10, type=int)
-    parser.add_argument("--dataset", default="sim-N", type=str, choices=DATASETS)
-    parser.add_argument("--pert_mode", default="original", type=str, choices=('original', 'simple'))
-    parser.add_argument("--detach_ratio", default=False, action='store_true')
+    parser.add_argument("--dataset", default="ihdp-N", type=str, choices=DATASETS)
+    parser.add_argument(
+        "--pert", default="simple", type=str, choices=("original", "simple")
+    )
+    parser.add_argument("--detach_ratio", default=False, action="store_true")
     parser.add_argument("--rdir", default="results", type=str)
     parser.add_argument("--opt", default="sgd", type=str, choices=("adam", "sgd"))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
-    parser.add_argument("--n_epochs", default=10000, type=int)
-    parser.add_argument("--batch_size", default=500, type=int)
+    parser.add_argument("--n_epochs", default=5000, type=int)
+    parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--wd", default=5e-3, type=float)
     parser.add_argument("--silent", default=False, action="store_true")
+    parser.add_argument("--ratio_normalize", default=False, action="store_true")
     parser.add_argument("--dropout", default=0.0, type=float)
 
     # regularizations available
@@ -344,7 +362,7 @@ if __name__ == "__main__":
     parser.add_argument("--combo_reg", default=False, action="store_true")
     parser.add_argument("--pos_reg", default=False, action="store_true")
     parser.add_argument("--tr_reg", default=False, action="store_true")
-    parser.add_argument("--tr_discrete", default=False, action="store_true")
+    parser.add_argument("--tr", default="discrete", choices=("discrete", "vc"))
     parser.add_argument(
         "--no_fit_ratio_scale",
         dest="fit_ratio_scale",
