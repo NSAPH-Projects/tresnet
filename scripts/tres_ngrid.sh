@@ -11,7 +11,7 @@ flags="--n_grid 25 --reg_multiscale"
 
 # datasets=("news-N")
 datasets=("news-N" "sim-N" "ihdp-N")
-regularizations=("--combo_reg" "--var_reg" "--ratio_reg" "--pos_reg --dropout 0.25" "--ratio_reg --dropout 0.25" "--combo_reg --pos_reg --dropout 0.25" "--dropout 0.25" "")
+regularizations=("--pos_reg --dropout 0.25" "--dropout 0.25" "" "--tr_reg --dropout 0.25" "tr_reg --dropout 0.25" "")
 
 # regularizations=("--var_reg" "--ratio_reg")
 # regularizations=("" "--combo_reg")
@@ -28,7 +28,7 @@ do
                 s=$((num_parallel*i + c))
                 # we use CUDA_VISIBLE_DEVICES in case of gpus
                 if [ $num_gpus -gt 0 ]; then export CUDA_VISIBLE_DEVICES=$((c % num_gpus)); fi
-                python main_ipw_si.py --seed=$s --dataset ${dset} ${reg} --rdir "results/ipw ${flags}" ${flags} --silent &
+                python main_ipw_si.py --seed=$s --dataset ${dset} ${reg} --rdir "results/tres reg ${flags}" ${flags} --silent &
             done
             wait
         done
