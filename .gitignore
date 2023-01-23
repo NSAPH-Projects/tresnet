@@ -3,6 +3,8 @@
 *.ipynb
 .DS_store
 simu1/
+data/
+data_medicare/
 
 # Local for mauricio; just accept notebooks in this folder
 !notebooks/*.ipynb

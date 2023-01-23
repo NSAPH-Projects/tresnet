@@ -11,7 +11,7 @@ def inverse_shift(treatment, delta, shift_type):
         log_det = 0
     elif shift_type == "percent":
         t_delta = treatment / (1 - delta)
-        log_det = -torch.log(1 - delta)
+        log_det = torch.log(1 - delta)
     else:
         raise NotImplementedError(shift_type)
     return t_delta, log_det
@@ -29,14 +29,14 @@ def shift(treatment, delta, shift_type):
 
 
 def log_density_ratio_under_shift(
-    treatment, delta, density_estimator, z, shift_type,
+    t, delta, density_estimator, z, shift_type,
 ):
     """z is the hidden vector for efficiency,
     eps just avoids nan on the log"""
-    t_delta, log_det = inverse_shift(treatment, delta, shift_type)
-    numer = density_estimator(t_delta, z)
-    denom = density_estimator(treatment, z)
-    log_ratio = torch.log(1e-10 + numer)  - log_det - torch.log(1e-10 + denom)
+    t_inv_delta, log_det = inverse_shift(t, delta, shift_type)
+    numer = density_estimator(t_inv_delta, z)
+    denom = density_estimator(t, z)
+    log_ratio = torch.log(1e-10 + numer)  + log_det - torch.log(1e-10 + denom)
 
     return log_ratio
 
@@ -102,7 +102,7 @@ class RatioRegularizer(ScaledRegularizer):
 
         # make loss and return
         sig = self.sig()[torch.cat([ix, ix])] if self.multiscale else self.sig()
-        ce_loss = F.binary_cross_entropy_with_logits(logits, tgts, reduction='none')
+        ce_loss = 0.5 * F.binary_cross_entropy_with_logits(logits, tgts, reduction='none')
         return (sig.pow(-1) * ce_loss).mean()
 
 

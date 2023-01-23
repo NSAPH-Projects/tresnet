@@ -28,7 +28,7 @@ do
                 s=$((num_parallel*i + c))
                 # we use CUDA_VISIBLE_DEVICES in case of gpus
                 if [ $num_gpus -gt 0 ]; then export CUDA_VISIBLE_DEVICES=$((c % num_gpus)); fi
-                python main_ipw_si.py --seed=$s --dataset ${dset} ${reg} --rdir "results/ipw ${flags}" ${flags} --silent &
+                python main_ipw.py --seed=$s --dataset ${dset} ${reg} --rdir "results/ipw ${flags}" ${flags} --silent &
             done
             wait
         done

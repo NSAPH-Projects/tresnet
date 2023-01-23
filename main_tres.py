@@ -7,6 +7,7 @@ import pandas as pd
 import os
 import yaml
 import matplotlib.pyplot as plt
+from copy import deepcopy
 
 plt.ioff()
 
@@ -19,7 +20,7 @@ from dataset.dataset import get_iter, make_dataset, DATASETS, set_seed
 def main(args: argparse.Namespace) -> None:
     # seed and use gpu when available
     set_seed(1234 + 131 * args.seed)  # like torch manual seed at all levels
-    dev = torch.cuda if torch.cuda.is_available() else "cpu"
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
 
     # experiment_dir
     s1 = f"var_{int(args.var_reg)}"
@@ -27,16 +28,20 @@ def main(args: argparse.Namespace) -> None:
     s3 = f"pos_{int(args.pos_reg)}"
     s4 = f"dout_{args.dropout}"
     s5 = f"erm_{int(args.erm)}"
-    exp_dir = f"{'-'.join([s1, s2, s3, s4, s5])}/{args.seed:02d}"
-    os.makedirs(f"{args.rdir}/{args.dataset}/{exp_dir}", exist_ok=True)
+    if args.edir is None:
+        edir = f"{'-'.join([s1, s2, s3, s4, s5])}/{args.seed:02d}"
+    else:
+        edir = f"{args.edir}/{args.seed:02d}"
+    os.makedirs(f"{args.rdir}/{args.dataset}/{edir}", exist_ok=True)
 
     # these are the shifting values use in the srf curve
     steps = 10
-    delta_list = torch.linspace(0.5 / steps, 0.5, steps=steps).to(dev)
+    delta_list = np.linspace(0.5 / steps, 0.5, num=steps, dtype=np.float32).tolist()
 
-    # make dataset from available options
-    D = make_dataset(args.dataset, delta_list, n_train=args.n_train, n_test=args.n_test)
+    # make dataset from available optionss
+    D = make_dataset(args.dataset, delta_list, n_train=args.n_train, n_test=args.n_test, noise_scale=args.noise)
     train_matrix = D["train_matrix"].to(dev)
+    test_matrix = D["train_matrix"].to(dev)
     shift_type = D["shift_type"]
     n, input_dim = train_matrix.shape[0], train_matrix.shape[1] - 2
 
@@ -63,7 +68,8 @@ def main(args: argparse.Namespace) -> None:
         args.ratio_reg = True
 
     if not args.erm:
-        args.var_reg = True
+        args.ratio_reg = True
+        args.fit_ratio_scale = False
 
     # make regularizing layers if required
     if args.var_reg:
@@ -87,22 +93,30 @@ def main(args: argparse.Namespace) -> None:
         ).to(dev)
         optim_params.append({"params": pos_reg.parameters()})
 
+    if args.pos_reg_tr:
+        pos_reg = ratios.PosteriorRegularizerTR(
+            delta_list=delta_list,
+            multiscale=args.reg_multiscale,
+        ).to(dev)
+        optim_params.append({"params": pos_reg.parameters()})
+
     if args.tr == "discrete":
-        targeted_regularizer = torch.zeros_like(delta_list)
-        if args.tr_reg:
-            targeted_regularizer.requires_grad_(True)
-            optim_params.append({"params": targeted_regularizer, "lr": 1e-5, "weight_decay": 0.0})
+        targeted_regularizer = torch.zeros(len(delta_list), requires_grad=args.tr_reg, device=dev)
+        tr_params = targeted_regularizer
     elif args.tr == "vc":
-        targeted_regularizer_model = TargetedRegularizerCoeff(
+        targeted_regularizer = TargetedRegularizerCoeff(
             degree=2,
             knots=delta_list[::2],
         ).to(dev)
-        if args.tr_reg:
-            optim_params.append(
-                {"params": targeted_regularizer_model.parameters(), "lr": 1e-5, "weight_decay": 0.0}
-            )
-        else:
-            for p in targeted_regularizer_model.parameters():
+        tr_params = targeted_regularizer.parameters()
+
+    if args.tr_reg:
+        optim_params.append(
+            {"params": tr_params, "lr": args.lr, "momentum": 0.0, "weight_decay": 0.0}
+        )
+    else:
+        if args.tr == "vc":
+            for p in tr_params:
                 p.requires_grad_(False)
 
     # make optimizer
@@ -110,24 +124,30 @@ def main(args: argparse.Namespace) -> None:
         optimizer = torch.optim.Adam(optim_params, lr=3e-4)
     elif args.opt == "sgd":
         optimizer = torch.optim.SGD(
-            optim_params, lr=3e-5, momentum=0.9, nesterov=True
+            optim_params, lr=args.lr, momentum=0.9, nesterov=True
         )
 
+    best_loss, best_model, best_iter = 1e6, deepcopy(model), 0
+    if args.tr_reg:
+        best_tr = deepcopy(targeted_regularizer)
+    best_model.eval()
+
     # training loop
-    train_loader = get_iter(train_matrix, batch_size=args.batch_size, shuffle=False)
+    train_loader = get_iter(train_matrix, batch_size=args.batch_size)
 
     for epoch in range(args.n_epochs):
         # dict to store all the losses per batch
         losses = defaultdict(lambda: deque(maxlen=len(train_loader)))
 
         # iterate each batch
-        for idx, item in enumerate(train_loader):
+        # for _, item in enumerate(train_loader):
+        for _, (t, x, y) in enumerate(train_loader):
             total_loss = torch.tensor(0.0, device=dev)
 
             # move tensor to gpu if available
-            t = item["treatment"].to(dev)
-            x = item["covariates"].to(dev)
-            y = item["outcome"].to(dev)
+            # t = item["treatment"].to(dev)
+            # x = item["covariates"].to(dev)
+            # y = item["outcome"].to(dev)
 
             # zero grad and evaluate model
             optimizer.zero_grad()
@@ -150,13 +170,13 @@ def main(args: argparse.Namespace) -> None:
             # 3. targeted loss
             # make perturbed predictor for random delta
             ix = torch.randint(0, len(delta_list), size=(t.shape[0],), device=dev)
-            random_delta = delta_list[ix]
+            random_delta = torch.FloatTensor(delta_list).to(dev)[ix]
             if args.tr == "discrete":
                 eps = targeted_regularizer[ix]
             elif args.tr == "vc":
-                eps = targeted_regularizer_model(random_delta)
+                eps = targeted_regularizer(random_delta)
             ratio = ratios.log_density_ratio_under_shift(
-                treatment=t,
+                t=t,
                 delta=random_delta,
                 density_estimator=density_head,
                 z=z,
@@ -170,7 +190,7 @@ def main(args: argparse.Namespace) -> None:
             elif args.pert == "simple":
                 y_pert = y_hat + eps
                 if args.ratio_normalize:
-                    ratio_ = ratio_ / ratio_.sum()
+                    ratio_ = ratio_ / ratio_.mean()
                 tr_loss = (ratio_ * (y_pert - y).pow(2)).mean()
             losses["tr_loss"].append(tr_loss.item())
             if args.tr_reg:
@@ -201,9 +221,53 @@ def main(args: argparse.Namespace) -> None:
             optimizer.step()
 
         # evaluation
-        if epoch == 0 or (epoch + 1) % 100 == 0:
+        if epoch == 0 or (epoch + 1) % 50 == 0:
             model.eval()
             with torch.no_grad():
+                # replace best model if improves
+                if args.val == "is":
+                    M = test_matrix
+                    t, x, y = M[:, 0], M[:, 1:-1], M[:, -1]
+                    output = model.forward(t, x)
+                    z, y_hat = output["z"], output["predicted_outcome"]
+                    val_losses = []
+                    for j, d in enumerate(delta_list):
+                        log_ratio = ratios.log_density_ratio_under_shift(
+                            t=t,
+                            delta=torch.full_like(t, d),
+                            density_estimator=best_model.density_estimator,
+                            z=z,
+                            shift_type=D["shift_type"],
+                        )
+                        ratio = log_ratio.clamp(-10, 10).exp()
+                        if args.ratio_normalize:
+                            ratio = ratio / ratio.mean()
+                        if args.tr_reg:
+                            if args.tr == "discrete":
+                                eps = best_tr[j]
+                            elif args.tr == "vc":
+                                eps = best_tr(torch.full_like(t, d))
+                            if args.pert == "original":
+                                y_pert = y_hat + eps * ratio
+                            elif args.pert == "simple":
+                                y_pert= y_hat + eps
+                        else:
+                            y_pert = y_hat
+                        val_losses.append((ratio * (y_pert - y).pow(2)).mean().item())
+                    val_loss = float(np.mean(val_losses))
+                    if val_loss < best_loss:
+                        best_model = deepcopy(model)
+                        best_model.eval()
+                        best_loss = val_loss
+                        best_iter = epoch
+                        best_tr = deepcopy(targeted_regularizer)
+
+                elif args.val is None:
+                    best_model = deepcopy(model)
+                    best_model.eval()
+
+                # obtain all evaluation metrics
+
                 if not args.silent:
                     print("== Epoch: ", epoch, " ==")
                     print("Metrics:")
@@ -213,9 +277,9 @@ def main(args: argparse.Namespace) -> None:
                 # iptw estimates
                 df = pd.DataFrame({"delta": delta_list})
                 for part in ("train", "test"):
-                    M = D[part + "_matrix"].to(dev)
+                    M = train_matrix if part == "train" else test_matrix
                     t, x, y = M[:, 0], M[:, 1:-1], M[:, -1]
-                    z = model.forward(t, x)["z"]
+                    z = best_model.forward(t, x)["z"]
                     srf = D["srf_" + part]
                     df[part + "_truth"] = srf
 
@@ -228,6 +292,8 @@ def main(args: argparse.Namespace) -> None:
                     # tmle_errors = []
                     tr_estims = []
                     tr_errors = []
+                    plugin_estims = []
+                    plugin_errors = []
 
                     shift_type = D["shift_type"]
 
@@ -235,42 +301,48 @@ def main(args: argparse.Namespace) -> None:
                         # IPW estimates
                         # obtain importance sampling density ratio weights
                         log_ratio = ratios.log_density_ratio_under_shift(
-                            treatment=t,
-                            delta=d,
+                            t=t,
+                            delta=torch.full_like(t, d),
                             density_estimator=density_head,
                             z=z,
                             shift_type=shift_type,
                         )
                         ratio = log_ratio.clamp(-10, 10).exp()
                         if args.ratio_normalize:
-                            ratio = ratio / ratio.sum()
-                        estim = (ratio * y).sum().item()
+                            ratio = ratio / ratio.mean()
+                        estim = (ratio * y).mean().item()
                         error = (estim - truth).item()
                         # ipw_estims.append(estim)
                         # ipw_errors.append(error)
 
                         # A-IPTW estimates
                         t_delta = ratios.shift(t, d, shift_type)
-                        y_delta = model(t_delta, x)["predicted_outcome"]
-                        y_hat = model(t, x)["predicted_outcome"]
-                        estim = (ratio * (y - y_hat)).sum() + y_delta.mean()
-                        error = (estim - truth).item()
-                        aipw_estims.append(estim)
-                        aipw_errors.append(error)
+                        y_delta = best_model(t_delta, x)["predicted_outcome"]
+                        y_hat = best_model(t, x)["predicted_outcome"]
+                        estim = (ratio * (y - y_hat)).mean() + y_delta.mean()
+                        error = (estim - truth)
+                        aipw_estims.append(estim.item())
+                        aipw_errors.append(error.item())
 
                         # Targeted Regularization
                         if args.tr == "discrete":
-                            eps = targeted_regularizer[j]
+                            eps = best_tr[j]
                         elif args.tr == "vc":
-                            eps = targeted_regularizer_model(torch.full_like(t, d))
+                            eps = best_tr(torch.full_like(t, d))
                         if args.pert == "original":
                             y_pert_delta = y_delta + eps * ratio
                         elif args.pert == "simple":
                             y_pert_delta = y_delta + eps
                         estim = y_pert_delta.mean()
-                        error = (estim - truth).item()
-                        tr_estims.append(estim)
-                        tr_errors.append(error)
+                        error = (estim - truth)
+                        tr_estims.append(estim.item())
+                        tr_errors.append(error.item())
+
+                        # Plugin
+                        estim = y_delta.mean()
+                        error = (estim - truth)
+                        plugin_estims.append(estim.item())
+                        plugin_errors.append(error.item())
 
                     # add estimation error as columns of result dataframe
                     # df[part + "_ipw_estim"] = ipw_estims
@@ -278,7 +350,9 @@ def main(args: argparse.Namespace) -> None:
                     df[part + "_aipw_estim"] = aipw_estims
                     df[part + "_aipw_error"] = aipw_errors
                     df[part + "_tr_estim"] = tr_estims
-                    df[part + "_tr_error"] = tr_estims
+                    df[part + "_tr_error"] = tr_errors
+                    df[part + "_plugin_estim"] = plugin_estims
+                    df[part + "_plugin_error"] = plugin_errors
 
                     # save metrics #TODO: this is only doing test, must upate to use df
                     # for computation
@@ -293,10 +367,15 @@ def main(args: argparse.Namespace) -> None:
                     metrics["tr_curve_error"] = float(
                         np.square(tr_errors).mean() ** 0.5
                     )
+                    metrics["plugin_curve_error"] = float(
+                        np.square(plugin_errors).mean() ** 0.5
+                    )
                     metrics_path = (
-                        f"{args.rdir}/{args.dataset}/{exp_dir}/metrics_{part}.yaml"
+                        f"{args.rdir}/{args.dataset}/{edir}/metrics_{part}.yaml"
                     )
                     metrics["last_saved_epoch"] = epoch
+                    metrics["best_iter"] = best_iter
+                    metrics["best_val"] = best_loss
                     with open(metrics_path, "w") as io:
                         yaml.safe_dump(metrics, io)
 
@@ -306,12 +385,13 @@ def main(args: argparse.Namespace) -> None:
                         print(f"  aipw curve: {metrics['aipw_curve_error']:.4f}")
                         print(f"  tr curve: {metrics['tr_curve_error']:.4f}")
 
+
                 # save estimated curve dataset
-                results_path = f"{args.rdir}/{args.dataset}/{exp_dir}/curve.csv"
+                results_path = f"{args.rdir}/{args.dataset}/{edir}/curve.csv"
                 df.round(4).to_csv(results_path, index=False)
 
                 # save experiment config
-                config_path = f"{args.rdir}/{args.dataset}/{exp_dir}/config.yaml"
+                config_path = f"{args.rdir}/{args.dataset}/{edir}/config.yaml"
                 with open(config_path, "w") as io:
                     yaml.safe_dump(vars(args), io)
 
@@ -327,7 +407,7 @@ def main(args: argparse.Namespace) -> None:
                 ax[1].plot(
                     df.delta, df.test_tr_estim, label="test estim", c="red", ls="--"
                 )
-                fig_path = f"{args.rdir}/{args.dataset}/{exp_dir}/fig.png"
+                fig_path = f"{args.rdir}/{args.dataset}/{edir}/fig.png"
                 ax[0].legend()
                 ax[1].legend()
                 plt.savefig(fig_path)
@@ -341,26 +421,31 @@ if __name__ == "__main__":
     parser.add_argument("--n_grid", default=10, type=int)
     parser.add_argument("--dataset", default="ihdp-N", type=str, choices=DATASETS)
     parser.add_argument(
-        "--pert", default="simple", type=str, choices=("original", "simple")
+        "--pert", default="original", type=str, choices=("original", "simple")
     )
     parser.add_argument("--detach_ratio", default=False, action="store_true")
     parser.add_argument("--rdir", default="results", type=str)
+    parser.add_argument("--edir", default=None, type=str)
     parser.add_argument("--opt", default="sgd", type=str, choices=("adam", "sgd"))
+    parser.add_argument("--val", default="is", type=str, choices=("is", None))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
-    parser.add_argument("--n_epochs", default=5000, type=int)
+    parser.add_argument("--n_epochs", default=2000, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--wd", default=5e-3, type=float)
+    parser.add_argument("--lr", default=1e-3, type=float)
+    parser.add_argument("--noise", default=0.5, type=float)
     parser.add_argument("--silent", default=False, action="store_true")
     parser.add_argument("--ratio_normalize", default=False, action="store_true")
     parser.add_argument("--dropout", default=0.0, type=float)
 
-    # regularizations available
+    # regularizations availables
     parser.add_argument("--no_erm", default=True, dest="erm", action="store_false")
     parser.add_argument("--var_reg", default=False, action="store_true")
     parser.add_argument("--ratio_reg", default=False, action="store_true")
     parser.add_argument("--combo_reg", default=False, action="store_true")
     parser.add_argument("--pos_reg", default=False, action="store_true")
+    parser.add_argument("--pos_reg_tr", default=False, action="store_true")
     parser.add_argument("--tr_reg", default=False, action="store_true")
     parser.add_argument("--tr", default="discrete", choices=("discrete", "vc"))
     parser.add_argument(

@@ -5,9 +5,10 @@ import pandas as pd
 import numpy as np
 
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import TensorDataset, Dataset, DataLoader
 from torch import cat, stack
 from torch import Tensor
+
 
 from typing import Optional, Tuple, Dict
 
@@ -22,35 +23,35 @@ DATASETS = (
 )
 
 
-class DatasetFromMatrix(Dataset):
-    """Create the pyTorch Dataset object that groes into the dataloader."""
+# class DatasetFromMatrix(Dataset):
+#     """Create the pyTorch Dataset object that groes into the dataloader."""
 
-    def __init__(self, data_matrix):
-        """
-        Args: create a torch dataset from a tensor data_matrix with size n * p
-        [treatment, features, outcome]`z
-        """
-        self.data_matrix = data_matrix
-        self.num_data = data_matrix.shape[0]
+#     def __init__(self, data_matrix):
+#         """
+#         Args: create a torch dataset from a tensor data_matrix with size n * p
+#         [treatment, features, outcome]`z
+#         """
+#         self.data_matrix = data_matrix
+#         self.num_data = data_matrix.shape[0]
 
-    def __len__(self):
-        return self.num_data
+#     def __len__(self):
+#         return self.num_data
 
-    def __getitem__(self, idx: int) -> dict:
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-        sample = self.data_matrix[idx, :]
+#     def __getitem__(self, idx: int) -> dict:
+#         sample = self.data_matrix[idx, :]
 
-        return {
-            "treatment": sample[0],
-            "covariates": sample[1:-1],
-            "outcome": sample[-1],
-        }
+#         return {
+#             "treatment": sample[0],
+#             "covariates": sample[1:-1],
+#             "outcome": sample[-1],
+#         }
 
 
-def get_iter(data_matrix, batch_size, shuffle=True):
-    dataset = DatasetFromMatrix(data_matrix)
-    iterator = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+def get_iter(data_matrix, batch_size, **kwargs):
+    # dataset = DatasetFromMatrix(data_matrix)
+    treatment, covariates, outcome = data_matrix[:, 0], data_matrix[:, 1:-1], data_matrix[:, -1]
+    dataset = TensorDataset(treatment, covariates, outcome )
+    iterator = DataLoader(dataset, batch_size=batch_size, **kwargs)
     return iterator
 
 
@@ -203,7 +204,7 @@ def support(dataset: str) -> str:
 
 
 def outcome(
-    D: dict, dataset: str, noise: Tensor | None = None, treatment: Tensor | None = None
+    D: dict, dataset: str, noise: Tensor | None = None, treatment: Tensor | None = None, noise_scale: float = 0.5
 ) -> Tensor:
     x = D["x"]
     t = D["t"] if treatment is None else treatment
@@ -213,7 +214,7 @@ def outcome(
             t**2 + (4 * Max(x1, x6).pow(3)) / (1.0 + 2 * x3.pow(2)) * x4.sin()
         )
         if noise is None:
-            noise = 0.5 * torch.randn_like(t)
+            noise = noise_scale * torch.randn_like(t)
         y = mu + noise
         return y, noise
     elif dataset == "ihdp-N":  # IHDP modification in VCNet (Niet et al., 2021)
@@ -231,7 +232,7 @@ def outcome(
             )
         )
         if noise is None:
-            noise = 0.5 * torch.randn_like(t)
+            noise = noise_scale * torch.randn_like(t)
         y = mu + noise
         return y, noise
     elif dataset == "news-N":  # News modification in VCNet (Niet et al., 2021)
@@ -246,7 +247,7 @@ def outcome(
         res = 2 * (4 * (t - 0.5) ** 2 * np.sin(0.5 * torch.pi * t)) * (res1 + res2)
 
         if noise is None:
-            noise = 0.5 * torch.randn_like(t)
+            noise = noise_scale * torch.randn_like(t)
         y = res + noise
         return y, noise
 
@@ -265,6 +266,7 @@ def outcome(
 def make_dataset(
     dataset: str,
     delta_list: Tensor,
+    noise_scale: float = 0.5,
     **kwargs,
 ) -> Dict:
     """
@@ -274,9 +276,9 @@ def make_dataset(
     """
     # -- should be same as vcnet code, but vectorized -- #
 
-    D = load_data(dataset, **kwargs)
+    D = load_data(dataset, noise_scale=noise_scale, **kwargs)
     x, t, train_ix, test_ix = D["x"], D["t"], D["train_ix"], D["test_ix"]
-    y, noise = outcome(D, dataset)
+    y, noise = outcome(D, dataset, noise_scale=noise_scale)
 
     train_matrix = cat([t[train_ix, None], x[train_ix], y[train_ix, None]], dim=1)
     test_matrix = cat([t[test_ix, None], x[test_ix], y[test_ix, None]], dim=1)
@@ -286,7 +288,7 @@ def make_dataset(
 
     if supp == "unit":  # treatment in (0,1)
         delta_scale = None
-        shifted_t = [t * (1 - d) for d in delta_list]
+        shifted_t = [t * float(1 - d) for d in delta_list]
         shift_type = "percent"
     elif supp == "real":  # treatment in real line
         delta_scale = t.std()

@@ -153,7 +153,7 @@ def main(args: argparse.Namespace) -> None:
 
                     for d, truth in zip(delta_list, srf):
                         log_ratio = ratios.log_density_ratio_under_shift(
-                            treatment=t,
+                            t=t,
                             delta=d,
                             density_estimator=density_head,
                             z=z,

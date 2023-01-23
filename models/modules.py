@@ -147,7 +147,9 @@ class DynamicLinearLayer(nn.Module):
         features = x[:, 1:]
         treatment = x[:, 0]
 
-        hidden = torch.matmul(self.weight.T, features.T).T
+        #! Mauricio: the following gives a warning, so I commented and used einsum
+        # hidden = torch.matmul(self.weight.T, features.T).T
+        hidden = torch.einsum('ab,bcd->acd', features, self.weight)
 
         treatment_basis = self.spline_basis(treatment)  # bs, d
         treatment_basis_unsqueezed = torch.unsqueeze(treatment_basis, 1)
@@ -247,7 +249,7 @@ class TruncatedPowerBasis:
             the value of each basis given x; batch_size * self.num_of_basis
         """
         x = x.squeeze()
-        out = torch.zeros(x.shape[0], self.num_of_basis)
+        out = torch.zeros(x.shape[0], self.num_of_basis, device=x.device)
         for value in range(self.num_of_basis):
             if value <= self.degree:
                 if value == 0:
