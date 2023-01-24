@@ -14,9 +14,7 @@ plt.ioff()
 from models.VCNet import VCNet
 from utils import ratios
 from models.modules import TargetedRegularizerCoeff
-#from dataset.dataset import get_iter, make_dataset, DATASETS, set_seed
-
-from data_medicare.dataset_medicare import set_seed, get_iter, DataMedicare
+from dataset.dataset import get_iter, make_dataset, DATASETS, set_seed
 
 
 def main(args: argparse.Namespace) -> None:
@@ -41,38 +39,11 @@ def main(args: argparse.Namespace) -> None:
     delta_list = np.linspace(0.5 / steps, 0.5, num=steps, dtype=np.float32).tolist()
 
     # make dataset from available optionss
-    path = "./zip_data.csv"
-    treatment_col= "pm25"
-    outcome_col= "dead"
-    offset_col= "time_count"
-    categorical_variables = ["year", "regionNORTHEST", "regionSOUTH", "regionWEST"]
-    columns_to_omit= ["zip"]
-
-    data = DataMedicare(
-                path, 
-                treatment_col, 
-                outcome_col, 
-                offset_col, 
-                categorical_variables=categorical_variables, 
-                columns_to_omit=columns_to_omit, 
-                train_prop=args.train_prop # defaults to 0.8, i.e 80% of data for training
-            )
-    data.init() # you have to init the DataMedicare object
-
-    # data.training_set: contains training set in format dict[keys]
-    # data.test: contains test set in format dict[keys]
-    # data.treatment_norm_min and data.treatment_norm_max are the coefficients for transforming from (0, 1) 
-
-    train_data = data.training_set
-    test_data = data.test_set      
-    
-    for item in train_data:
-        train_data[item] = train_data[item].to(dev)
-    
-    for item in train_data:
-        test_data[item] = test_data[item].to(dev)
-        
-    n, input_dim = train_data["covariates"].shape[0], train_data["covariates"].shape[1] 
+    D = make_dataset(args.dataset, delta_list, n_train=args.n_train, n_test=args.n_test, noise_scale=args.noise)
+    train_matrix = D["train_matrix"].to(dev)
+    test_matrix = D["train_matrix"].to(dev)
+    shift_type = D["shift_type"]
+    n, input_dim = train_matrix.shape[0], train_matrix.shape[1] - 2
 
     # make neural network model
     density_estimator_config = [(input_dim, 50, 1), (50, 50, 1)]
@@ -162,7 +133,7 @@ def main(args: argparse.Namespace) -> None:
     best_model.eval()
 
     # training loop
-    train_loader = get_iter(train_data, batch_size=args.batch_size)
+    train_loader = get_iter(train_matrix, batch_size=args.batch_size)
 
     for epoch in range(args.n_epochs):
         # dict to store all the losses per batch
@@ -170,10 +141,7 @@ def main(args: argparse.Namespace) -> None:
 
         # iterate each batch
         # for _, item in enumerate(train_loader):
-        for _, (t, x, y, offset) in enumerate(train_loader):
-
-            # Now the offset is avilable as above, try it out 
-
+        for _, (t, x, y) in enumerate(train_loader):
             total_loss = torch.tensor(0.0, device=dev)
 
             # move tensor to gpu if available
@@ -258,8 +226,8 @@ def main(args: argparse.Namespace) -> None:
             with torch.no_grad():
                 # replace best model if improves
                 if args.val == "is":
-                    M = test_data
-                    t, x, y = M["treatment"], M["covariates"], M["outcome"]
+                    M = test_matrix
+                    t, x, y = M[:, 0], M[:, 1:-1], M[:, -1]
                     output = model.forward(t, x)
                     z, y_hat = output["z"], output["predicted_outcome"]
                     val_losses = []
@@ -309,8 +277,8 @@ def main(args: argparse.Namespace) -> None:
                 # iptw estimates
                 df = pd.DataFrame({"delta": delta_list})
                 for part in ("train", "test"):
-                    M = train_data if part == "train" else test_data
-                    t, x, y = M["treatment"], M["covariates"], M["outcome"]
+                    M = train_matrix if part == "train" else test_matrix
+                    t, x, y = M[:, 0], M[:, 1:-1], M[:, -1]
                     z = best_model.forward(t, x)["z"]
                     srf = D["srf_" + part]
                     df[part + "_truth"] = srf
@@ -460,8 +428,8 @@ if __name__ == "__main__":
     parser.add_argument("--edir", default=None, type=str)
     parser.add_argument("--opt", default="sgd", type=str, choices=("adam", "sgd"))
     parser.add_argument("--val", default="is", type=str, choices=("is", None))
-    parser.add_argument("--train_prop", default=0.8, type=int)
-    #parser.add_argument("--n_test", default=200, type=int)
+    parser.add_argument("--n_train", default=500, type=int)
+    parser.add_argument("--n_test", default=200, type=int)
     parser.add_argument("--n_epochs", default=2000, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--wd", default=5e-3, type=float)
