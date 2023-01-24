@@ -8,13 +8,21 @@ import os
 import yaml
 import matplotlib.pyplot as plt
 from copy import deepcopy
+from tqdm import tqdm
+import proplot as pplt
 
 plt.ioff()
+from matplotlib import rc
+# rc("pdf", fonttype=3)
+# rc('font',**{'family':'serif'})
+# rc('text', usetex=True)
 
 from models.VCNet import VCNet, RatioNet
 from utils import ratios
 from models.modules import TargetedRegularizerCoeff
-from dataset.dataset import get_iter, make_dataset, DATASETS, set_seed
+#from dataset.dataset import get_iter, make_dataset, DATASETS, set_seed
+
+from data_medicare.dataset_medicare import set_seed, get_iter, DataMedicare
 
 
 def main(args: argparse.Namespace) -> None:
@@ -24,10 +32,10 @@ def main(args: argparse.Namespace) -> None:
 
     # experiment_dir
     s1 = f"var_{int(args.var_reg)}"
-    s2 = f"ratio_{int(args.ratio_reg)}"
+    s2 = f"trreg_{int(args.tr_reg)}"
     s3 = f"pos_{int(args.pos_reg)}"
     s4 = f"dout_{args.dropout}"
-    s5 = f"retio_{args.ratio}"
+    s5 = f"ratio_{args.ratio}"
     if args.edir is None:
         edir = f"{'-'.join([s1, s2, s3, s4, s5])}/{args.seed:02d}"
     else:
@@ -35,15 +43,70 @@ def main(args: argparse.Namespace) -> None:
     os.makedirs(f"{args.rdir}/{args.dataset}/{edir}", exist_ok=True)
 
     # these are the shifting values use in the srf curve
-    steps = 10
-    delta_list = np.linspace(0.5 / steps, 0.5, num=steps, dtype=np.float32).tolist()
+    # steps = 10
+    # delta_list = np.linspace(0.5 / steps, 0.5, num=steps, dtype=np.float32).tolist()
+   
 
     # make dataset from available optionss
-    D = make_dataset(args.dataset, delta_list, n_train=args.n_train, n_test=args.n_test, noise_scale=args.noise)
-    train_matrix = D["train_matrix"].to(dev)
-    test_matrix = D["train_matrix"].to(dev)
-    shift_type = D["shift_type"]
-    n, input_dim = train_matrix.shape[0], train_matrix.shape[1] - 2
+    path = "./data_medicare/zip_data.csv"
+    treatment_col= "pm25"
+    outcome_col= "dead"
+    offset_col= "time_count"
+    categorical_variables = ["regionNORTHEST", "regionSOUTH", "regionWEST"]
+    columns_to_omit= ["zip"]
+
+    data = DataMedicare(
+                path, 
+                treatment_col, 
+                outcome_col, 
+                offset_col, 
+                categorical_variables=categorical_variables, 
+                columns_to_omit=columns_to_omit, 
+                train_prop=args.train_prop # defaults to 0.8, i.e 80% of data for training
+            )
+    data.init() # you have to init the DataMedicare object
+
+    # data.training_set: contains training set in format dict[keys]
+    # data.test: contains test set in format dict[keys]
+    # data.treatment_norm_min and data.treatment_norm_max are the coefficients for transforming from (0, 1) 
+
+    train_data = data.training_set
+    test_data = data.test_set      
+    
+    for item in train_data:
+        train_data[item] = train_data[item].to(dev)
+    
+    for item in train_data:
+        test_data[item] = test_data[item].to(dev)
+        
+    n, input_dim = train_data["covariates"].shape[0], train_data["covariates"].shape[1] 
+
+    shift_type = args.shift_type
+    
+    tmin, tmax = data.treatment_norm_min, data.treatment_norm_max
+    if shift_type == "cutoff":
+        naaqs = np.array([data.treatment_norm_max, 20, 15, 12, 11, 10, 9, 8], dtype=np.float32)
+        delta_list_unscaled = naaqs
+        delta_list = (delta_list_unscaled - tmin) / (tmax - tmin)
+    elif args.shift_type == "percent":
+        naaqs = np.array([12, 11, 10, 9, 8], dtype=np.float32)
+        quantiles = [0.99, 0.95, 0.9, 0.75, 0.5, 0.25]
+        steps = 10
+        t = torch.cat([train_data["treatment"], test_data["treatment"]])
+        delta_list = np.linspace(0.0, 0.5, num=steps, dtype=np.float32).tolist()
+        delta_list_unscaled = 100 *  np.array(delta_list)
+        misaligned = np.zeros((len(delta_list), len(naaqs)))
+        quantmat = np.zeros((len(delta_list), len(quantiles)))
+        for i, d in enumerate(delta_list):
+            shifted = ratios.shift(t, d, "percent")
+            for j, th in enumerate(naaqs):
+                misaligned[i, j] = (shifted > (th  - tmin) / (tmax - tmin)).float().mean().item()
+            quantmat[i, :] = tmin + (tmax - tmin) * np.quantile(shifted.cpu().numpy(), quantiles)
+        quantdf = pd.DataFrame(quantmat, columns=[f"q-{q}" for q in quantiles], index=delta_list_unscaled)
+        quantdf.to_csv(f"{args.rdir}/{args.dataset}/{edir}/quants.csv")
+
+        misaligneddf = pd.DataFrame(misaligned, columns=[f"naaqs-{h}" for h in naaqs], index=delta_list_unscaled)
+        misaligneddf.to_csv(f"{args.rdir}/{args.dataset}/{edir}/misaligned.csv")
 
     # make neural network model
     density_estimator_config = [(input_dim, 50, 1), (50, 50, 1)]
@@ -94,6 +157,7 @@ def main(args: argparse.Namespace) -> None:
             delta_list=delta_list,
             multiscale=args.reg_multiscale,
             fit_scale=args.fit_ratio_scale,
+            ls=args.ls
         ).to(dev)
         optim_params.append({"params": ratio_reg.parameters()})
 
@@ -137,7 +201,7 @@ def main(args: argparse.Namespace) -> None:
     best_model.eval()
 
     # training loop
-    train_loader = get_iter(train_matrix, batch_size=args.batch_size, shuffle=True)
+    train_loader = get_iter(train_data, batch_size=args.batch_size, shuffle=True)
 
     for epoch in range(args.n_epochs):
         # dict to store all the losses per batch
@@ -145,7 +209,10 @@ def main(args: argparse.Namespace) -> None:
 
         # iterate each batch
         # for _, item in enumerate(train_loader):
-        for _, (t, x, y) in enumerate(train_loader):
+        for _, (t, x, y, offset) in tqdm(enumerate(train_loader), total=len(train_loader)):
+
+            # Now the offset is avilable as above, try it out 
+
             total_loss = torch.tensor(0.0, device=dev)
 
             # move tensor to gpu if available
@@ -172,20 +239,21 @@ def main(args: argparse.Namespace) -> None:
                 losses["gps_ratio_loss"].append(gps_ratio_loss.item())
 
             elif args.ratio == "c_ratio":
-                gps_ratio_losses = []
+                c_ratio_losses = []
                 for j, d in enumerate(delta_list):
                     t_d = ratios.shift(t, d, shift_type)
                     logits = torch.cat([model.log_ratio(t_d, z, j), model.log_ratio(t, z, j)])
                     tgts = torch.cat([torch.ones_like(t), torch.zeros_like(t)]).clamp(args.ls, 1 - args.ls)
                     L = F.binary_cross_entropy_with_logits(logits, tgts)
-                    gps_ratio_losses.append(L)
-                gps_ratio_loss = sum(gps_ratio_losses) / len(delta_list)
-                total_loss = total_loss + gps_ratio_loss
-                losses["gps_ratio_loss"].append(gps_ratio_loss.item())
+                    c_ratio_losses.append(L)
+                c_ratio_loss = sum(c_ratio_losses) / len(delta_list)
+                total_loss = total_loss + c_ratio_loss
+                losses["c_ratio_loss"].append(c_ratio_loss.item())
 
             # 2. outcome loss
-            y_hat = model_output["predicted_outcome"]
-            outcome_loss = F.mse_loss(y_hat, y)
+            lp = model_output["predicted_outcome"]
+            y_hat = offset * lp.exp()
+            outcome_loss = F.poisson_nll_loss(y_hat, y, log_input = False)
             losses["outcome_loss"].append(outcome_loss.item())
             total_loss = total_loss + outcome_loss
 
@@ -214,12 +282,14 @@ def main(args: argparse.Namespace) -> None:
                     ratio_ = ratio_ / ratio_.mean()
                 if args.pert == "simple":
                     y_pert = y_hat + eps
-                    L = (ratio_ * (y_pert - y).pow(2)).mean()
+                    # L = (ratio_ * (y_pert - y).pow(2)).mean()
+                    L = (ratio_ * F.poisson_nll_loss(y_pert.clamp(min=0), y, log_input=False, reduction='none')).mean()
                     with torch.no_grad():
                         bias = (ratio_ * (y - y_hat)).mean() / ratio_.mean()
                 elif args.pert == "original":
                     y_pert = y_hat + ratio_ * eps
-                    L = F.mse_loss(y_pert, y)
+                    # L = F.mse_loss(y_pert, y)
+                    L = F.poisson_nll_loss(y_pert.clamp(min=0), y, log_input=False)
                     with torch.no_grad():
                         bias = (ratio_ * (y - y_hat)).mean() / ratio_.pow(2).mean()
                 if args.tr == "discrete": # manual update of epsilon
@@ -276,6 +346,7 @@ def main(args: argparse.Namespace) -> None:
             losses["total_loss"].append(total_loss.item())
 
             total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
             optimizer.step()
 
             if args.tr == 'discrete':
@@ -283,15 +354,18 @@ def main(args: argparse.Namespace) -> None:
             # update epsilon (coordinate ascent)
 
         # evaluation
-        if epoch == 0 or (epoch + 1) % 50 == 0:
+        if epoch == 0 or (epoch + 1) % args.eval_every == 0:
             model.eval()
             with torch.no_grad():
                 # replace best model if improves
                 if args.val == "is":
-                    M = test_matrix
-                    t, x, y = M[:, 0], M[:, 1:-1], M[:, -1]
+                    M = test_data
+                    t, x, y, offset = M["treatment"], M["covariates"], M["outcome"], M["offset"]
+                    ix = torch.LongTensor(np.random.choice(len(t), size=50000)).to(dev)
+                    t, x, y, offset = [u[ix] for u in (t, x, y, offset)]
                     output = model.forward(t, x)
-                    z, y_hat = output["z"], output["predicted_outcome"]
+                    z, lp = output["z"], output["predicted_outcome"]
+                    y_hat = offset * lp.exp()
                     val_losses = []
                     for j, d in enumerate(delta_list):
                         if args.ratio != "c_ratio":
@@ -300,7 +374,7 @@ def main(args: argparse.Namespace) -> None:
                                 delta=torch.full_like(t, d),
                                 density_estimator=best_model.density_estimator,
                                 z=z,
-                                shift_type=D["shift_type"],
+                                shift_type=shift_type,
                             )
                         else:
                             log_ratio = model.log_ratio(t, z, j)
@@ -343,27 +417,24 @@ def main(args: argparse.Namespace) -> None:
                 # iptw estimates
                 df = pd.DataFrame({"delta": delta_list})
                 for part in ("train", "test"):
-                    M = train_matrix if part == "train" else test_matrix
-                    t, x, y = M[:, 0], M[:, 1:-1], M[:, -1]
-                    z = best_model.forward(t, x)["z"]
-                    srf = D["srf_" + part]
-                    df[part + "_truth"] = srf
+                    M = train_data if part == "train" else test_data
+                    t, x, y, offset = M["treatment"], M["covariates"], M["outcome"], M["offset"]
+                    ix = torch.LongTensor(np.random.choice(len(t), size=50000)).to(dev)
+                    t, x, y, offset = [u[ix] for u in (t, x, y, offset)]
+                    best_model_output = best_model.forward(t, x)
+                    z = best_model_output["z"]
+                    y_hat = offset * best_model_output['predicted_outcome'].exp()
 
                     # dictionaries for all kind of estimates
                     # ipw_estims = []
                     # ipw_errors = []
                     aipw_estims = []
-                    aipw_errors = []
                     # tmle_estims = []
                     # tmle_errors = []
                     tr_estims = []
-                    tr_errors = []
                     plugin_estims = []
-                    plugin_errors = []
 
-                    shift_type = D["shift_type"]
-
-                    for j, (d, truth) in enumerate(zip(delta_list, srf)):
+                    for j, d in enumerate(delta_list):
                         if args.ratio != "c_ratio":
                             log_ratio = ratios.log_density_ratio_under_shift(
                                 t=t,
@@ -384,7 +455,7 @@ def main(args: argparse.Namespace) -> None:
 
                         # A-IPTW estimates
                         t_delta = ratios.shift(t, d, shift_type)
-                        y_delta = best_model(t_delta, x)["predicted_outcome"]
+                        y_delta = offset * model.prediction_head(t_delta, z).exp()
                         if args.tr == "discrete":
                             eps = best_tr[j]
                         elif args.tr == "vc":
@@ -395,33 +466,23 @@ def main(args: argparse.Namespace) -> None:
                         elif args.pert == "simple":
                             y_pert = y_hat + eps
                             y_pert_delta = y_delta + eps
-                        y_hat = best_model(t, x)["predicted_outcome"]
                         estim = (ratio * (y - y_pert)).mean() + y_pert_delta.mean()
-                        error = (estim - truth)
                         aipw_estims.append(estim.item())
-                        aipw_errors.append(error.item())
 
                         # Targeted Regularization
                         estim = y_pert_delta.mean()
-                        error = (estim - truth)
                         tr_estims.append(estim.item())
-                        tr_errors.append(error.item())
 
                         # Plugin
                         estim = y_delta.mean()
-                        error = (estim - truth)
                         plugin_estims.append(estim.item())
-                        plugin_errors.append(error.item())
 
                     # add estimation error as columns of result dataframe
                     # df[part + "_ipw_estim"] = ipw_estims
                     # df[part + "_ipw_error"] = ipw_errors
                     df[part + "_aipw_estim"] = aipw_estims
-                    df[part + "_aipw_error"] = aipw_errors
                     df[part + "_tr_estim"] = tr_estims
-                    df[part + "_tr_error"] = tr_errors
                     df[part + "_plugin_estim"] = plugin_estims
-                    df[part + "_plugin_error"] = plugin_errors
 
                     # save metrics #TODO: this is only doing test, must upate to use df
                     # for computation
@@ -430,15 +491,6 @@ def main(args: argparse.Namespace) -> None:
                     # metrics["ipw_curve_error"] = float(
                     #     np.square(ipw_errors).mean() ** 0.5
                     # )
-                    metrics["aipw_curve_error"] = float(
-                        np.square(aipw_errors).mean() ** 0.5
-                    )
-                    metrics["tr_curve_error"] = float(
-                        np.square(tr_errors).mean() ** 0.5
-                    )
-                    metrics["plugin_curve_error"] = float(
-                        np.square(plugin_errors).mean() ** 0.5
-                    )
                     metrics_path = (
                         f"{args.rdir}/{args.dataset}/{edir}/metrics_{part}.yaml"
                     )
@@ -447,13 +499,6 @@ def main(args: argparse.Namespace) -> None:
                     metrics["best_val"] = best_loss
                     with open(metrics_path, "w") as io:
                         yaml.safe_dump(metrics, io)
-
-                    if not args.silent:
-                        print(f"SRF {part}:")
-                        # print(f"  ipw curve: {metrics['ipw_curve_error']:.4f}")
-                        print(f"  aipw curve: {metrics['aipw_curve_error']:.4f}")
-                        print(f"  tr curve: {metrics['tr_curve_error']:.4f}")
-
 
                 # save estimated curve dataset
                 results_path = f"{args.rdir}/{args.dataset}/{edir}/curve.csv"
@@ -465,22 +510,43 @@ def main(args: argparse.Namespace) -> None:
                     yaml.safe_dump(vars(args), io)
 
                 # plot curves
-                _, ax = plt.subplots(1, 2, figsize=(6, 3))
+                if shift_type == "cutoff":
+                    _, ax = pplt.subplots([1, 2], figsize=(7, 3), wspace=5)
+                elif shift_type == "percent":
+                    _, ax = pplt.subplots([[1, 2], [3, 4]], figsize=(7, 5), hspace=1, wspace=5, sharey=False)
+                # plt.subplots_adjust(wspace=0.5, hspace=0.5)
+                pct = df.train_tr_estim / df.train_tr_estim.iloc[0] - 1
                 ax[0].plot(
-                    df.delta, df.train_truth, label="train truth", c="blue", ls="-"
+                    delta_list_unscaled, 100 * pct, label="Train", c="blue", ls="--"
                 )
-                ax[0].plot(
-                    df.delta, df.train_tr_estim, label="train estim", c="blue", ls="--"
-                )
-                ax[1].plot(df.delta, df.test_truth, label="test truth", c="red", ls="-")
+                pct = df.test_tr_estim / df.test_tr_estim.iloc[0] - 1
                 ax[1].plot(
-                    df.delta, df.test_tr_estim, label="test estim", c="red", ls="--"
+                    delta_list_unscaled, 100 * pct, label="Test", c="red", ls="--"
                 )
                 fig_path = f"{args.rdir}/{args.dataset}/{edir}/fig.png"
-                ax[0].legend()
-                ax[1].legend()
-                plt.savefig(fig_path)
+                ax[0].legend(); ax[0].set_ylabel("Reduction in deaths (%)");
+                ax[1].legend(); ax[1].set_ylabel("Reduction in deaths (%)"); 
+                
+                if shift_type == "cutoff":
+                    ax[0].set_xlim(8, 14)
+                    ax[1].set_xlim(8, 14)
+                    for k in range(2):
+                        ax[k].set_xlabel("NAAQS")
+
+                if shift_type == "percent":
+                    # plut naaq compliance
+                    ax[2].plot(delta_list_unscaled, misaligned, label=naaqs.astype(int))
+                    ax[2].set_ylabel("Zipcode-years above threshold (%)"); 
+                    ax[2].legend(title="NAAQS")
+                    ax[3].plot(delta_list_unscaled, quantmat, label=quantiles)
+                    ax[3].set_ylabel("PM 2.5  ($\mu g/m^3$)"); 
+                    ax[3].legend(title="Quantile")
+                    for k in range(4):
+                        ax[k].set_xlabel("Percent reduction (%)")
+                
+                plt.savefig(fig_path, bbox_inches='tight')
                 plt.close()
+
             model.train()
 
 
@@ -488,43 +554,46 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--n_grid", default=30, type=int)
-    parser.add_argument("--dataset", default="ihdp-N", type=str, choices=DATASETS)
     parser.add_argument(
         "--pert", default="original", type=str, choices=("original", "simple")
     )
     parser.add_argument("--detach_ratio", default=False, action="store_true")
+    parser.add_argument("--eval_every", default=10, type=int)
     parser.add_argument("--rdir", default="results", type=str)
     parser.add_argument("--edir", default=None, type=str)
     parser.add_argument("--opt", default="sgd", type=str, choices=("adam", "sgd"))
     parser.add_argument("--val", default="is", type=str, choices=("is", None))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
-    parser.add_argument("--n_epochs", default=10000, type=int)
-    parser.add_argument("--batch_size", default=500, type=int)
-    parser.add_argument("--wd", default=5e-3, type=float)
-    parser.add_argument("--lr", default=1e-4, type=float) 
-    parser.add_argument("--ls", default=0.0, type=float) 
-    parser.add_argument("--eps_lr", default=0.1, type=float) 
+    parser.add_argument("--n_epochs", default=50, type=int)
+    parser.add_argument("--batch_size", default=2000, type=int)
+    parser.add_argument("--wd", default=1e-3, type=float)
+    parser.add_argument("--lr", default=1e-3, type=float) 
+    parser.add_argument("--ls", default=0.01, type=float) 
+    parser.add_argument("--eps_lr", default=0.001, type=float) 
     parser.add_argument("--beta", default=0.1, type=float)
     parser.add_argument("--noise", default=0.5, type=float)
+    parser.add_argument("--train_prop", default=0.8, type=float)
     parser.add_argument("--silent", default=False, action="store_true")
     parser.add_argument("--ratio_norm", default=False, action="store_true")
     parser.add_argument("--dropout", default=0.05, type=float)
+    parser.add_argument("--mc_dropout", default=False, action="store_true")
 
     # regularizations availables
-    parser.add_argument("--ratio", default="gps_ratio", type=str, choices=("erm", "gps_ratio", "c_ratio"))
+    parser.add_argument("--ratio", default="c_ratio", type=str, choices=("erm", "gps_ratio", "c_ratio"))
+    parser.add_argument("--shift_type", default="cutoff", type=str, choices=("percent", "cutoff"))
     parser.add_argument("--var_reg", default=False, action="store_true")
     parser.add_argument("--ratio_reg", default=False, action="store_true")
     parser.add_argument("--combo_reg", default=False, action="store_true")
     parser.add_argument("--pos_reg", default=False, action="store_true")
     parser.add_argument("--pos_reg_tr", default=False, action="store_true")
-    parser.add_argument("--tr_reg", default=False, action="store_true")
-    parser.add_argument("--target", type=str, default="si", choices=("si", "erf"))
+    parser.add_argument("--tr_reg", default=True, action="store_true")
     parser.add_argument("--tr", default="discrete", choices=("discrete", "vc"))
     parser.add_argument("--fit_ratio_scale", default=False, action="store_true")
     parser.add_argument("--reg_multiscale", default=False, action="store_true")
 
     args = parser.parse_args()
+    args.dataset = "medicare"
 
     # with torch.autograd.set_detect_anomaly(True):
     main(args)

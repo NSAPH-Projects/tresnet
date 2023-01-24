@@ -19,11 +19,13 @@ def inverse_shift(treatment, delta, shift_type):
 
 
 def shift(treatment, delta, shift_type):
-    assert shift_type in ("subtract", "percent")
+    assert shift_type in ("subtract", "percent", "cutoff")
     if shift_type == "subtract":
         t_delta = treatment - delta
     elif shift_type == "percent":
         t_delta = treatment * (1 - delta)
+    elif shift_type == "cutoff":
+        t_delta = treatment.clamp(max=delta)
     else:
         raise NotImplementedError(shift_type)
     return t_delta

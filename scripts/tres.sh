@@ -10,19 +10,19 @@ case $set in
     1)
     # Set 1. TR test
     extra_flags=""
-    regularizations=(""  "--tr_reg --pert simple" "--tr_reg --pert original" "--tr_reg --pert simple --detach_ratio" "--tr_reg --pert original --detach_ratio")
+    regularizations=("--tr_reg --pert simple" "--tr_reg --pert original" "--tr_reg --pert simple --detach_ratio" "--tr_reg --pert original --detach_ratio" "")
     rdir="results/tres_pert/"
     ;;
     2)
     # Set 2. N-grid
     extra_flags=""
-    regularizations=("" "--tr_reg --n_grid 10" "--tr_reg --n_grid 25" "--tr_reg --n_grid 50")
+    regularizations=("--tr_reg --n_grid 10" "--tr_reg --n_grid 25" "--tr_reg --n_grid 50" "")
     rdir="results/tres_ngrid/"
     ;;
     3)
     # Set 3. Reg
     extra_flags=""
-    regularizations=("" "--dropout 0.0" "--tr_reg --dropout 0.0" "--tr_reg --dropout 0.05" "--tr_reg --dropout 0.2")
+    regularizations=("--dropout 0.0" "--tr_reg --dropout 0.0" "--tr_reg --dropout 0.05" "--tr_reg --dropout 0.2" "")
     rdir="results/tres_reg/"
     ;;
     4)
@@ -40,7 +40,7 @@ case $set in
     6)
     # Set 6. C-Ratio LS
     extra_flags=""
-    regularizations=("" "--ratio c_ratio --tr_reg --ls 0.0" "--ratio c_ratio --tr_reg --ls 0.01" "--ratio c_ratio --tr_reg --ls 0.1")
+    regularizations=("--ratio c_ratio --tr_reg --ls 0.01" "--ratio c_ratio --tr_reg --ls 0.1" "" "--ratio c_ratio --tr_reg --ls 0.0" )
     rdir="results/tres_ls/"
     ;;
     7)
