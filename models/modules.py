@@ -105,6 +105,121 @@ class DiscreteDensityEstimator(nn.Module):
                     m.bias.data.zero_()
 
 
+class VCDiscreteEstimator(nn.Module):
+    def __init__(self, in_dimension, num_grids, spline_degree, spline_knots, a=0, b=1):
+        """This module uses the Encoder and a linear layer + interpolation
+        to output intermediate vector z and the conditional density/generalized propensity score
+
+        Args:
+
+            num_grids (_type_): _description_
+        """
+
+        super(VCDiscreteEstimator, self).__init__()
+        self.num_grids = num_grids
+        self.a, self.b = a, b
+        out_dimension = num_grids + 1
+
+        #! Mauricio Bias is not required when using softmax
+        self.fc = DynamicLinearLayer(
+            in_dimension, out_dimension, 1, spline_degree, spline_knots, is_last_layer=True,
+        )
+
+    def forward(self, d, z):
+        """_summary_
+
+        Args:
+            z (Tensor): representation vector from the encoder
+        """
+        d_hidden = torch.cat([d[:, None], z], 1)
+        out = self.fc(d_hidden)
+
+        # x1 = list(torch.arange(0, out.shape[0]))  # List of batch indexes
+
+        # These outputs sare needed fto execute the last equation in page 4 of the paper
+        # Linear interpolation
+        (
+            lower_grid_idx,
+            upper_grid_idx,
+            distance_to_lower,
+        ) = get_linear_interpolation_params(d, self.num_grids, a=self.a, b=self.b)
+        in_support = (d >= self.a) & (d <= self.b)
+        assert torch.all(in_support), "This layer can't deal with values outside 0-1"
+
+        ix = torch.arange(out.shape[0])
+        lower_bounds = out[ix, lower_grid_idx]  # Get values at the lower grid index
+        upper_bounds = out[ix, upper_grid_idx]  # Get values at the upper grid index
+
+        prob_score = lower_bounds + (upper_bounds - lower_bounds) * distance_to_lower
+        if torch.any(~ in_support):
+            raise Exception("")
+        return prob_score * in_support.float()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                m.weight.data.normal_(0, 0.01)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+
+
+class DiscreteDensityEstimator(nn.Module):
+    def __init__(self, in_dimension, num_grids, bias=True):
+        """This module uses the Encoder and a linear layer + interpolation
+        to output intermediate vector z and the conditional density/generalized propensity score
+
+        Args:
+
+            num_grids (_type_): _description_
+        """
+
+        super(DiscreteDensityEstimator, self).__init__()
+        self.num_grids = num_grids
+
+        out_dimension = num_grids + 1
+
+        #! Mauricio Bias is not required when using softmax
+        self.fc = nn.Linear(
+            in_features=in_dimension, out_features=out_dimension, bias=False # bias
+        )
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, treatment, z):
+        """_summary_
+
+        Args:
+            z (Tensor): representation vector from the encoder
+        """
+        out = self.fc(z)
+        out = self.softmax(out)
+
+        # x1 = list(torch.arange(0, out.shape[0]))  # List of batch indexes
+
+        # These outputs are needed fto execute the last equation in page 4 of the paper
+        # Linear interpolation
+        (
+            lower_grid_idx,
+            upper_grid_idx,
+            distance_to_lower,
+        ) = get_linear_interpolation_params(treatment, self.num_grids)
+        in_support = (treatment >= 0.0) & (treatment <= 1.0)
+
+        ix = torch.arange(out.shape[0])
+        lower_bounds = out[ix, lower_grid_idx]  # Get values at the lower grid index
+        upper_bounds = out[ix, upper_grid_idx]  # Get values at the upper grid index
+
+        prob_score = lower_bounds + (upper_bounds - lower_bounds) * distance_to_lower
+
+        return prob_score * in_support.float()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                m.weight.data.normal_(0, 0.01)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+
+
 class DynamicLinearLayer(nn.Module):
     def __init__(
         self,
@@ -291,7 +406,7 @@ class TargetedRegularizerCoeff(nn.Module):
         self.weight.data.zero_()
 
 
-def get_linear_interpolation_params(treatment, num_grid):
+def get_linear_interpolation_params(treatment, num_grid, a=0, b=1):
 
     """
 
@@ -308,9 +423,10 @@ def get_linear_interpolation_params(treatment, num_grid):
     # lower_grid_idx += (lower_grid_idx < 0).int()
 
     # mauricio: edits
-    upper_grid_idx = torch.ceil(treatment * num_grid).clamp(0, num_grid - 1)
-    lower_grid_idx = torch.floor(treatment * num_grid).clamp(0, num_grid - 1)
-    distance_to_lower_grid = treatment * num_grid - lower_grid_idx
+    tmp = (treatment - a) * (b - a)
+    upper_grid_idx = torch.ceil(tmp * num_grid).clamp(0, num_grid - 1)
+    lower_grid_idx = torch.floor(tmp * num_grid).clamp(0, num_grid - 1)
+    distance_to_lower_grid = tmp * num_grid - lower_grid_idx
 
     return (
         lower_grid_idx.int().tolist(),

@@ -278,7 +278,8 @@ def make_dataset(
 
     D = load_data(dataset, noise_scale=noise_scale, **kwargs)
     x, t, train_ix, test_ix = D["x"], D["t"], D["train_ix"], D["test_ix"]
-    y, noise = outcome(D, dataset, noise_scale=noise_scale)
+    # y, noise = outcome(D, dataset, noise_scale=noise_scale)
+    y, noise = outcome(D, dataset, noise_scale=0.5)
 
     train_matrix = cat([t[train_ix, None], x[train_ix], y[train_ix, None]], dim=1)
     test_matrix = cat([t[test_ix, None], x[test_ix], y[test_ix, None]], dim=1)

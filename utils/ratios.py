@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as dists
+import numpy as np
 
 
 def inverse_shift(treatment, delta, shift_type):
@@ -50,6 +51,8 @@ class ScaledRegularizer(nn.Module):
     ) -> None:
         super().__init__()
         assert delta_list is not None, "provide delta list"
+        if isinstance(delta_list, (list, np.ndarray)):
+            delta_list = torch.FloatTensor(delta_list)
         self.register_buffer("multiscale", torch.tensor(multiscale))
         if multiscale:
             self.lsig = nn.Parameter(

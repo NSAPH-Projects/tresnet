@@ -11,12 +11,10 @@ from copy import deepcopy
 
 plt.ioff()
 
-from models.VCNet import VCNet, RatioNet
+from models.VCNet import VCNet
 from utils import ratios
 from models.modules import TargetedRegularizerCoeff
-#from dataset.dataset import get_iter, make_dataset, DATASETS, set_seed
-
-from data_medicare.dataset_medicare import set_seed, get_iter, DataMedicare
+from dataset.dataset import get_iter, make_dataset, DATASETS, set_seed
 
 
 def main(args: argparse.Namespace) -> None:
@@ -29,7 +27,7 @@ def main(args: argparse.Namespace) -> None:
     s2 = f"ratio_{int(args.ratio_reg)}"
     s3 = f"pos_{int(args.pos_reg)}"
     s4 = f"dout_{args.dropout}"
-    s5 = f"retio_{args.ratio}"
+    s5 = f"erm_{int(args.erm)}"
     if args.edir is None:
         edir = f"{'-'.join([s1, s2, s3, s4, s5])}/{args.seed:02d}"
     else:
@@ -41,67 +39,25 @@ def main(args: argparse.Namespace) -> None:
     delta_list = np.linspace(0.5 / steps, 0.5, num=steps, dtype=np.float32).tolist()
 
     # make dataset from available optionss
-    path = "./zip_data.csv"
-    treatment_col= "pm25"
-    outcome_col= "dead"
-    offset_col= "time_count"
-    categorical_variables = ["year", "regionNORTHEST", "regionSOUTH", "regionWEST"]
-    columns_to_omit= ["zip"]
-
-    data = DataMedicare(
-                path, 
-                treatment_col, 
-                outcome_col, 
-                offset_col, 
-                categorical_variables=categorical_variables, 
-                columns_to_omit=columns_to_omit, 
-                train_prop=args.train_prop # defaults to 0.8, i.e 80% of data for training
-            )
-    data.init() # you have to init the DataMedicare object
-
-    # data.training_set: contains training set in format dict[keys]
-    # data.test: contains test set in format dict[keys]
-    # data.treatment_norm_min and data.treatment_norm_max are the coefficients for transforming from (0, 1) 
-
-    train_data = data.training_set
-    test_data = data.test_set      
-    
-    for item in train_data:
-        train_data[item] = train_data[item].to(dev)
-    
-    for item in train_data:
-        test_data[item] = test_data[item].to(dev)
-        
-    n, input_dim = train_data["covariates"].shape[0], train_data["covariates"].shape[1] 
+    D = make_dataset(args.dataset, delta_list, n_train=args.n_train, n_test=args.n_test, noise_scale=args.noise)
+    train_matrix = D["train_matrix"].to(dev)
+    test_matrix = D["train_matrix"].to(dev)
+    shift_type = D["shift_type"]
+    n, input_dim = train_matrix.shape[0], train_matrix.shape[1] - 2
 
     # make neural network model
     density_estimator_config = [(input_dim, 50, 1), (50, 50, 1)]
     pred_head_config = [(50, 50, 1), (50, 1, 1)]
 
-    if args.ratio != "c_ratio":
-        model = VCNet(
-            density_estimator_config,
-            num_grids=args.n_grid,
-            pred_head_config=pred_head_config,
-            spline_degree=2,
-            spline_knots=[0.33, 0.66],
-            dropout=args.dropout,
-        ).to(dev)
-        density_head = model.density_estimator
-    else:
-        model = RatioNet(
-            delta_list,
-            density_estimator_config,
-            num_grids=args.n_grid,
-            pred_head_config=pred_head_config,
-            spline_degree_Q=2,
-            spline_knots_Q=[0.33, 0.66],
-            spline_degree_W=2,
-            spline_knots_W=np.linspace(min(delta_list), max(delta_list), num=len(delta_list)//2)[1:-1].tolist(),
-            dropout=args.dropout,
-        ).to(dev)
-        ratio_head = model.ratio_estimator
-    
+    model = VCNet(
+        density_estimator_config,
+        num_grids=args.n_grid,
+        pred_head_config=pred_head_config,
+        spline_degree=2,
+        spline_knots=[0.33, 0.66],
+        dropout=args.dropout,
+    ).to(dev)
+    density_head = model.density_estimator
 
     model._initialize_weights()
     optim_params = [{"params": model.parameters(), "weight_decay": args.wd}]
@@ -111,6 +67,10 @@ def main(args: argparse.Namespace) -> None:
         args.var_reg = True
         args.ratio_reg = True
 
+    if not args.erm:
+        args.ratio_reg = True
+        args.fit_ratio_scale = False
+
     # make regularizing layers if required
     if args.var_reg:
         var_reg = ratios.VarianceRegularizer(
@@ -118,7 +78,7 @@ def main(args: argparse.Namespace) -> None:
         ).to(dev)
         optim_params.append({"params": var_reg.parameters()})
 
-    if args.ratio_reg or args.ratio == "gps_ratio":
+    if args.ratio_reg:
         ratio_reg = ratios.RatioRegularizer(
             delta_list=delta_list,
             multiscale=args.reg_multiscale,
@@ -140,17 +100,24 @@ def main(args: argparse.Namespace) -> None:
         ).to(dev)
         optim_params.append({"params": pos_reg.parameters()})
 
-    if args.tr == "discrete" or not args.tr_reg:
-        targeted_regularizer = torch.zeros(len(delta_list), device=dev)
+    if args.tr == "discrete":
+        targeted_regularizer = torch.zeros(len(delta_list), requires_grad=args.tr_reg, device=dev)
+        tr_params = targeted_regularizer
     elif args.tr == "vc":
         targeted_regularizer = TargetedRegularizerCoeff(
             degree=2,
             knots=delta_list[::2],
         ).to(dev)
         tr_params = targeted_regularizer.parameters()
+
+    if args.tr_reg:
         optim_params.append(
-            {"params": tr_params, "momentum": 0.0, "weight_decay": 0.0}
+            {"params": tr_params, "lr": args.lr, "momentum": 0.0, "weight_decay": 0.0}
         )
+    else:
+        if args.tr == "vc":
+            for p in tr_params:
+                p.requires_grad_(False)
 
     # make optimizer
     if args.opt == "adam":
@@ -162,11 +129,11 @@ def main(args: argparse.Namespace) -> None:
 
     best_loss, best_model, best_iter = 1e6, deepcopy(model), 0
     if args.tr_reg:
-        best_tr = deepcopy(targeted_regularizer) if args.tr == "vc" else targeted_regularizer.clone()
+        best_tr = deepcopy(targeted_regularizer)
     best_model.eval()
 
     # training loop
-    train_loader = get_iter(train_data, batch_size=args.batch_size, shuffle=True)
+    train_loader = get_iter(train_matrix, batch_size=args.batch_size)
 
     for epoch in range(args.n_epochs):
         # dict to store all the losses per batch
@@ -174,10 +141,7 @@ def main(args: argparse.Namespace) -> None:
 
         # iterate each batch
         # for _, item in enumerate(train_loader):
-        for _, (t, x, y, offset) in enumerate(train_loader):
-
-            # Now the offset is avilable as above, try it out 
-
+        for _, (t, x, y) in enumerate(train_loader):
             total_loss = torch.tensor(0.0, device=dev)
 
             # move tensor to gpu if available
@@ -188,32 +152,14 @@ def main(args: argparse.Namespace) -> None:
             # zero grad and evaluate model
             optimizer.zero_grad()
             model_output = model(t, x)
+            probs = model_output["prob_score"]
             z = model_output["z"]
 
             # 1. density negative loglikelihood loss
-            if args.ratio == "erm":
-                probs = model_output["prob_score"]
-                density_negll = -probs.log().mean()
-                losses["density_negll"].append(density_negll.item())
+            density_negll = -probs.log().mean()
+            losses["density_negll"].append(density_negll.item())
+            if args.erm:
                 total_loss = total_loss + density_negll
-
-            elif args.ratio == "gps_ratio":
-                gps_ratio_loss = ratio_reg(t, density_head, z, shift_type)
-                gps_ratio_loss = gps_ratio_loss + (1 / n) * ratio_reg.prior()
-                total_loss = total_loss + gps_ratio_loss
-                losses["gps_ratio_loss"].append(gps_ratio_loss.item())
-
-            elif args.ratio == "c_ratio":
-                gps_ratio_losses = []
-                for j, d in enumerate(delta_list):
-                    t_d = ratios.shift(t, d, shift_type)
-                    logits = torch.cat([model.log_ratio(t_d, z, j), model.log_ratio(t, z, j)])
-                    tgts = torch.cat([torch.ones_like(t), torch.zeros_like(t)]).clamp(args.ls, 1 - args.ls)
-                    L = F.binary_cross_entropy_with_logits(logits, tgts)
-                    gps_ratio_losses.append(L)
-                gps_ratio_loss = sum(gps_ratio_losses) / len(delta_list)
-                total_loss = total_loss + gps_ratio_loss
-                losses["gps_ratio_loss"].append(gps_ratio_loss.item())
 
             # 2. outcome loss
             y_hat = model_output["predicted_outcome"]
@@ -222,75 +168,33 @@ def main(args: argparse.Namespace) -> None:
             total_loss = total_loss + outcome_loss
 
             # 3. targeted loss
-            # make perturbed predictor
-            tr_losses = []
-            biases = torch.zeros(len(delta_list), device=dev)
-            for j, d in enumerate(delta_list):
-                if args.ratio != "c_ratio":
-                    log_ratio = ratios.log_density_ratio_under_shift(
-                        t=t,
-                        delta=torch.full_like(t,d),
-                        density_estimator=density_head,
-                        z=z,
-                        shift_type=shift_type,
-                    )
-                else:
-                    log_ratio = model.log_ratio(t, z, j)
-                if args.tr == "discrete":
-                    eps = targeted_regularizer[j]
-                elif args.tr == "vc":
-                    eps = targeted_regularizer(torch.full_like(t, d))
-                ratio = log_ratio.clamp(-10, 10).exp()
-                ratio_ = ratio.detach() if args.detach_ratio else ratio
-                if args.ratio_norm:
+            # make perturbed predictor for random delta
+            ix = torch.randint(0, len(delta_list), size=(t.shape[0],), device=dev)
+            random_delta = torch.FloatTensor(delta_list).to(dev)[ix]
+            if args.tr == "discrete":
+                eps = targeted_regularizer[ix]
+            elif args.tr == "vc":
+                eps = targeted_regularizer(random_delta)
+            ratio = ratios.log_density_ratio_under_shift(
+                t=t,
+                delta=random_delta,
+                density_estimator=density_head,
+                z=z,
+                shift_type=shift_type,
+            )
+            ratio = ratio.clamp(-10, 10).exp()
+            ratio_ = ratio.detach() if args.detach_ratio else ratio
+            if args.pert == "original":
+                y_pert = y_hat + eps * ratio_
+                tr_loss = F.mse_loss(y_pert, y)
+            elif args.pert == "simple":
+                y_pert = y_hat + eps
+                if args.ratio_normalize:
                     ratio_ = ratio_ / ratio_.mean()
-                if args.pert == "simple":
-                    y_pert = y_hat + eps
-                    L = (ratio_ * (y_pert - y).pow(2)).mean()
-                    with torch.no_grad():
-                        bias = (ratio_ * (y - y_hat)).mean() / ratio_.mean()
-                elif args.pert == "original":
-                    y_pert = y_hat + ratio_ * eps
-                    L = F.mse_loss(y_pert, y)
-                    with torch.no_grad():
-                        bias = (ratio_ * (y - y_hat)).mean() / ratio_.pow(2).mean()
-                if args.tr == "discrete": # manual update of epsilon
-                    biases[j] = bias
-                    # eps.add_((bias - eps).item(), alpha=args.eps_lr)
-                tr_losses.append(L)
-            tr_losses = sum(tr_losses)
+                tr_loss = (ratio_ * (y_pert - y).pow(2)).mean()
+            losses["tr_loss"].append(tr_loss.item())
             if args.tr_reg:
-                total_loss = total_loss + args.beta * tr_losses
-            losses["tr_loss"].append(tr_losses.item())
-
-
-            # ix = torch.randint(0, len(delta_list), size=(t.shape[0],), device=dev)
-            # random_delta = torch.FloatTensor(delta_list).to(dev)[ix]
-            # if args.tr == "discrete":
-            #     eps = targeted_regularizer[ix]
-            # elif args.tr == "vc":
-            #     eps = targeted_regularizer(random_delta)
-            # ratio = ratios.log_density_ratio_under_shift(
-            #     t=t,
-            #     delta=random_delta,
-            #     density_estimator=density_head,
-            #     z=z,
-            #     shift_type=shift_type,
-            # )
-            # ratio = ratio.clamp(-10, 10).exp()
-            # ratio_ = ratio.detach() if args.detach_ratio else ratio
-            # if args.pert == "original":
-            #     y_pert = y_hat + eps * ratio_
-            #     tr_loss = F.mse_loss(y_pert, y)
-            # elif args.pert == "simple":
-            #     y_pert = y_hat + eps
-            #     if args.ratio_norm:
-            #         ratio_ = ratio_ / ratio_.mean()
-            #     tr_loss = (ratio_ * (y_pert - y).pow(2)).mean()
-            # 
-            # losses["tr_loss"].append(tr_loss.item())
-            # if args.tr_reg:
-            #     total_loss = total_loss + args.beta * tr_loss
+                total_loss = total_loss + tr_loss
 
             # 4. other regularization losses
             if args.var_reg:
@@ -298,6 +202,12 @@ def main(args: argparse.Namespace) -> None:
                 var_reg_loss = var_reg_loss + (1 / n) * var_reg.prior()
                 total_loss = total_loss + var_reg_loss
                 losses["var_reg_loss"].append(var_reg_loss.item())
+
+            if args.ratio_reg:
+                ratio_reg_loss = ratio_reg(t, density_head, z, shift_type)
+                ratio_reg_loss = ratio_reg_loss + (1 / n) * ratio_reg.prior()
+                total_loss = total_loss + ratio_reg_loss
+                losses["ratio_reg_loss"].append(ratio_reg_loss.item())
 
             if args.pos_reg:
                 pos_reg_loss = pos_reg(t, model, x, shift_type)
@@ -310,36 +220,28 @@ def main(args: argparse.Namespace) -> None:
             total_loss.backward()
             optimizer.step()
 
-            if args.tr == 'discrete':
-                targeted_regularizer += args.eps_lr * (biases - targeted_regularizer)
-            # update epsilon (coordinate ascent)
-
         # evaluation
         if epoch == 0 or (epoch + 1) % 50 == 0:
             model.eval()
             with torch.no_grad():
                 # replace best model if improves
                 if args.val == "is":
-                    M = test_data
-                    t, x, y = M["treatment"], M["covariates"], M["outcome"]
+                    M = test_matrix
+                    t, x, y = M[:, 0], M[:, 1:-1], M[:, -1]
                     output = model.forward(t, x)
                     z, y_hat = output["z"], output["predicted_outcome"]
                     val_losses = []
                     for j, d in enumerate(delta_list):
-                        if args.ratio != "c_ratio":
-                            log_ratio = ratios.log_density_ratio_under_shift(
-                                t=t,
-                                delta=torch.full_like(t, d),
-                                density_estimator=best_model.density_estimator,
-                                z=z,
-                                shift_type=D["shift_type"],
-                            )
-                        else:
-                            log_ratio = model.log_ratio(t, z, j)
+                        log_ratio = ratios.log_density_ratio_under_shift(
+                            t=t,
+                            delta=torch.full_like(t, d),
+                            density_estimator=best_model.density_estimator,
+                            z=z,
+                            shift_type=D["shift_type"],
+                        )
                         ratio = log_ratio.clamp(-10, 10).exp()
-                        if args.ratio_norm:
+                        if args.ratio_normalize:
                             ratio = ratio / ratio.mean()
-                        # ratio = 1
                         if args.tr_reg:
                             if args.tr == "discrete":
                                 eps = best_tr[j]
@@ -358,7 +260,7 @@ def main(args: argparse.Namespace) -> None:
                         best_model.eval()
                         best_loss = val_loss
                         best_iter = epoch
-                        best_tr = deepcopy(targeted_regularizer) if args.tr == "vc" else targeted_regularizer.clone()
+                        best_tr = deepcopy(targeted_regularizer)
 
                 elif args.val is None:
                     best_model = deepcopy(model)
@@ -375,8 +277,8 @@ def main(args: argparse.Namespace) -> None:
                 # iptw estimates
                 df = pd.DataFrame({"delta": delta_list})
                 for part in ("train", "test"):
-                    M = train_data if part == "train" else test_data
-                    t, x, y = M["treatment"], M["covariates"], M["outcome"]
+                    M = train_matrix if part == "train" else test_matrix
+                    t, x, y = M[:, 0], M[:, 1:-1], M[:, -1]
                     z = best_model.forward(t, x)["z"]
                     srf = D["srf_" + part]
                     df[part + "_truth"] = srf
@@ -396,44 +298,41 @@ def main(args: argparse.Namespace) -> None:
                     shift_type = D["shift_type"]
 
                     for j, (d, truth) in enumerate(zip(delta_list, srf)):
-                        if args.ratio != "c_ratio":
-                            log_ratio = ratios.log_density_ratio_under_shift(
-                                t=t,
-                                delta=torch.full_like(t, d),
-                                density_estimator=density_head,
-                                z=z,
-                                shift_type=shift_type,
-                            )
-                        else:
-                            log_ratio = model.log_ratio(t, z, j)
+                        # IPW estimates
+                        # obtain importance sampling density ratio weights
+                        log_ratio = ratios.log_density_ratio_under_shift(
+                            t=t,
+                            delta=torch.full_like(t, d),
+                            density_estimator=density_head,
+                            z=z,
+                            shift_type=shift_type,
+                        )
                         ratio = log_ratio.clamp(-10, 10).exp()
-                        if args.ratio_norm:
+                        if args.ratio_normalize:
                             ratio = ratio / ratio.mean()
-                        # estim = (ratio * y).mean().item()
-                        # error = (estim - truth).item()
+                        estim = (ratio * y).mean().item()
+                        error = (estim - truth).item()
                         # ipw_estims.append(estim)
                         # ipw_errors.append(error)
 
                         # A-IPTW estimates
                         t_delta = ratios.shift(t, d, shift_type)
                         y_delta = best_model(t_delta, x)["predicted_outcome"]
-                        if args.tr == "discrete":
-                            eps = best_tr[j]
-                        elif args.tr == "vc":
-                            eps = best_tr(torch.full_like(t, d))
-                        if args.pert == "original":
-                            y_pert = y_hat + eps * ratio
-                            y_pert_delta = y_delta + eps * ratio
-                        elif args.pert == "simple":
-                            y_pert = y_hat + eps
-                            y_pert_delta = y_delta + eps
                         y_hat = best_model(t, x)["predicted_outcome"]
-                        estim = (ratio * (y - y_pert)).mean() + y_pert_delta.mean()
+                        estim = (ratio * (y - y_hat)).mean() + y_delta.mean()
                         error = (estim - truth)
                         aipw_estims.append(estim.item())
                         aipw_errors.append(error.item())
 
                         # Targeted Regularization
+                        if args.tr == "discrete":
+                            eps = best_tr[j]
+                        elif args.tr == "vc":
+                            eps = best_tr(torch.full_like(t, d))
+                        if args.pert == "original":
+                            y_pert_delta = y_delta + eps * ratio
+                        elif args.pert == "simple":
+                            y_pert_delta = y_delta + eps
                         estim = y_pert_delta.mean()
                         error = (estim - truth)
                         tr_estims.append(estim.item())
@@ -519,7 +418,7 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", default=0, type=int)
-    parser.add_argument("--n_grid", default=30, type=int)
+    parser.add_argument("--n_grid", default=10, type=int)
     parser.add_argument("--dataset", default="ihdp-N", type=str, choices=DATASETS)
     parser.add_argument(
         "--pert", default="original", type=str, choices=("original", "simple")
@@ -531,20 +430,17 @@ if __name__ == "__main__":
     parser.add_argument("--val", default="is", type=str, choices=("is", None))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
-    parser.add_argument("--n_epochs", default=10000, type=int)
-    parser.add_argument("--batch_size", default=500, type=int)
+    parser.add_argument("--n_epochs", default=2000, type=int)
+    parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--wd", default=5e-3, type=float)
-    parser.add_argument("--lr", default=1e-4, type=float) 
-    parser.add_argument("--ls", default=0.0, type=float) 
-    parser.add_argument("--eps_lr", default=0.1, type=float) 
-    parser.add_argument("--beta", default=0.1, type=float)
+    parser.add_argument("--lr", default=1e-3, type=float)
     parser.add_argument("--noise", default=0.5, type=float)
     parser.add_argument("--silent", default=False, action="store_true")
-    parser.add_argument("--ratio_norm", default=False, action="store_true")
-    parser.add_argument("--dropout", default=0.05, type=float)
+    parser.add_argument("--ratio_normalize", default=False, action="store_true")
+    parser.add_argument("--dropout", default=0.0, type=float)
 
     # regularizations availables
-    parser.add_argument("--ratio", default="gps_ratio", type=str, choices=("erm", "gps_ratio", "c_ratio"))
+    parser.add_argument("--no_erm", default=True, dest="erm", action="store_false")
     parser.add_argument("--var_reg", default=False, action="store_true")
     parser.add_argument("--ratio_reg", default=False, action="store_true")
     parser.add_argument("--combo_reg", default=False, action="store_true")
@@ -552,10 +448,13 @@ if __name__ == "__main__":
     parser.add_argument("--pos_reg_tr", default=False, action="store_true")
     parser.add_argument("--tr_reg", default=False, action="store_true")
     parser.add_argument("--tr", default="discrete", choices=("discrete", "vc"))
-    parser.add_argument("--fit_ratio_scale", default=False, action="store_true")
+    parser.add_argument(
+        "--no_fit_ratio_scale",
+        dest="fit_ratio_scale",
+        default=True,
+        action="store_false",
+    )
     parser.add_argument("--reg_multiscale", default=False, action="store_true")
 
     args = parser.parse_args()
-
-    # with torch.autograd.set_detect_anomaly(True):
     main(args)

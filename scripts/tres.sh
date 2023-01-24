@@ -1,7 +1,7 @@
 #!/bin/bash
 
-num_parallel=10
-num_seeds=30
+num_parallel=20
+num_seeds=20
 num_gpus=0
 
 set=${1:-1}    
@@ -9,33 +9,45 @@ set=${1:-1}
 case $set in
     1)
     # Set 1. TR test
-    extra_flags="--dropout 0.05"
-    regularizations=("--tr_reg --pert original --tr discrete --no_erm"  "--tr_reg --pert simple --tr discrete" "--tr_reg --pert original --tr discrete" "--tr_reg --pert original --tr discrete --ratio_normalize"   "--tr_reg --pert original --tr vc" "")
+    extra_flags=""
+    regularizations=(""  "--tr_reg --pert simple" "--tr_reg --pert original" "--tr_reg --pert simple --detach_ratio" "--tr_reg --pert original --detach_ratio")
     rdir="results/tres_pert/"
     ;;
     2)
     # Set 2. N-grid
-    extra_flags="--dropout 0.05"
-    regularizations=("--tr_reg --n_grid 10" "--tr_reg --n_grid 20" "--tr_reg --n_grid 30")
+    extra_flags=""
+    regularizations=("" "--tr_reg --n_grid 10" "--tr_reg --n_grid 25" "--tr_reg --n_grid 50")
     rdir="results/tres_ngrid/"
     ;;
     3)
-    # Set 3. Ratio reg
+    # Set 3. Reg
     extra_flags=""
-    regularizations=("" "--dropout 0.05" "--tr_reg" "--tr_reg --dropout 0.05" "--tr_reg --dropout 0.05  --ratio_normalize"  "--tr_reg --dropout 0.05 --pos_reg --reg_multiscale" "--dropout 0.05")
+    regularizations=("" "--dropout 0.0" "--tr_reg --dropout 0.0" "--tr_reg --dropout 0.05" "--tr_reg --dropout 0.2")
     rdir="results/tres_reg/"
     ;;
     4)
     # Set 4. Noise scale
-    extra_flags="--dropout 0.05"
-    regularizations=("--noise 0.5" "--noise 0.1" "--noise 0.5 --tr_reg" "--noise 0.1 --tr_reg")
+    extra_flags=""
+    regularizations=("--noise 0.5" "--noise 0.1" "--noise 0.05" "--noise 0.5 --tr_reg" "--noise 0.1 --tr_reg" "--noise 0.05 --tr_reg")
     rdir="results/tres_noise/"
     ;;
     5)
-    # Set 5. Other regs
-    extra_flags="--reg_multiscale"
-    regularizations=("" "--var_reg --tr_reg" "--tr_reg --detach_ratio" "--tr_reg" "--tr_reg --dropout 0.05" "--tr_reg --dropout 0.05 --detach_ratio")
-    rdir="results/tres_other/"
+    # Set 5. Detach
+    extra_flags=""
+    regularizations=("" "--ratio erm --tr_reg" "--ratio gps_ratio --tr_reg" "--tr_reg --ratio gps_ratio --detach_ratio" "--tr_reg --ratio erm --detach_ratio")
+    rdir="results/tres_detach/"
+    ;;
+    6)
+    # Set 6. C-Ratio LS
+    extra_flags=""
+    regularizations=("" "--ratio c_ratio --tr_reg --ls 0.0" "--ratio c_ratio --tr_reg --ls 0.01" "--ratio c_ratio --tr_reg --ls 0.1")
+    rdir="results/tres_ls/"
+    ;;
+    7)
+    # Set 7. Detach
+    extra_flags=""
+    regularizations=("" "--tr_reg" "--tr_reg --ratio_norm")
+    rdir="results/tres_ratio_norm/"
     ;;
     *)
     echo "Wrong input!"
