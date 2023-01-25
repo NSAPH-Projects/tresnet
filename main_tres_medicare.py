@@ -207,6 +207,7 @@ def main(args: argparse.Namespace) -> None:
 
     # training loop
     train_loader = get_iter(train_data, batch_size=args.batch_size, shuffle=True)
+    eps_lr = 1 / len(train_loader)
 
     for epoch in range(args.n_epochs):
         # dict to store all the losses per batch
@@ -355,7 +356,7 @@ def main(args: argparse.Namespace) -> None:
             optimizer.step()
 
             if args.tr == 'discrete':
-                targeted_regularizer += args.eps_lr * (biases - targeted_regularizer)
+                targeted_regularizer += eps_lr * (biases - targeted_regularizer)
             # update epsilon (coordinate ascent)
 
         # evaluation
@@ -578,12 +579,12 @@ if __name__ == "__main__":
     parser.add_argument("--val", default="is", type=str, choices=("is", None))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
-    parser.add_argument("--n_epochs", default=50, type=int)
-    parser.add_argument("--batch_size", default=2000, type=int)
-    parser.add_argument("--wd", default=1e-3, type=float)
-    parser.add_argument("--lr", default=1e-3, type=float) 
+    parser.add_argument("--n_epochs", default=100, type=int)
+    parser.add_argument("--batch_size", default=500, type=int)
+    parser.add_argument("--wd", default=3e-5, type=float)
+    parser.add_argument("--lr", default=1e-4, type=float) 
     parser.add_argument("--ls", default=0.0, type=float) 
-    parser.add_argument("--eps_lr", default=0.01, type=float) 
+    # parser.add_argument("--eps_lr", default=0.001, type=float) p
     parser.add_argument("--beta", default=0.1, type=float)
     parser.add_argument("--noise", default=0.5, type=float)
     parser.add_argument("--train_prop", default=0.8, type=float)
