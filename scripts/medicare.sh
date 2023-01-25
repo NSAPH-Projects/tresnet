@@ -1,10 +1,10 @@
 #!/bin/bash
 
-num_parallel=4
-num_seeds=8
+num_parallel=5
+num_seeds=50
 num_gpus=0
 
-set=${1:-1}    
+set=${1:-3}    
 
 case $set in
     1)
@@ -19,9 +19,9 @@ case $set in
     # regularizations=("")
     rdir="results/"
     ;;
-    2)
+    3)
     # Set 3. GPS=ratio percent
-    extra_flags="--tr_reg --shift_type=percent --ratio=erm"
+    extra_flags="--tr_reg --shift_type=percent --ratio=gps_ratio"
     # regularizations=("")
     rdir="results/"
     ;;
@@ -43,7 +43,7 @@ esac
                 # we use CUDA_VISIBLE_DEVICES in case of gpus
                 if [ $num_gpus -gt 0 ]; then export CUDA_VISIBLE_DEVICES=$((c % num_gpus)); fi
                 flags="${extra_flags}"
-                python main_tres_medicare.py --seed=$s ${flags} --rdir="${rdir}" --edir="${flags}" &
+                python main_tres_medicare.py --seed=$((s + num_seeds)) ${flags} --rdir="${rdir}" --edir="${flags}" &
             done
             wait
         done
