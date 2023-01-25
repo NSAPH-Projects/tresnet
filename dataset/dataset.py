@@ -267,6 +267,7 @@ def make_dataset(
     dataset: str,
     delta_list: Tensor,
     noise_scale: float = 0.5,
+    count: bool = False,
     **kwargs,
 ) -> Dict:
     """
@@ -280,6 +281,9 @@ def make_dataset(
     x, t, train_ix, test_ix = D["x"], D["t"], D["train_ix"], D["test_ix"]
     # y, noise = outcome(D, dataset, noise_scale=noise_scale)
     y, noise = outcome(D, dataset, noise_scale=0.5)
+
+    if count:
+        y = y.exp().round()
 
     train_matrix = cat([t[train_ix, None], x[train_ix], y[train_ix, None]], dim=1)
     test_matrix = cat([t[test_ix, None], x[test_ix], y[test_ix, None]], dim=1)
@@ -300,6 +304,9 @@ def make_dataset(
 
     # make counterfactuals and shift-response functions
     cfs = stack([outcome(D, dataset, treatment=tcf, noise=noise)[0] for tcf in shifted_t], 1)
+
+    if count:
+        ycf = ycf.exp().round()
 
     # average the counterfactuals for value of delta
     srf_train = cfs[train_ix, :].mean(0)

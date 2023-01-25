@@ -12,7 +12,7 @@ from tqdm import tqdm
 import proplot as pplt
 
 plt.ioff()
-from matplotlib import rc
+# from matplotlib import rc
 # rc("pdf", fonttype=3)
 # rc('font',**{'family':'serif'})
 # rc('text', usetex=True)
@@ -22,7 +22,7 @@ from utils import ratios
 from models.modules import TargetedRegularizerCoeff
 #from dataset.dataset import get_iter, make_dataset, DATASETS, set_seed
 
-from data_medicare.dataset_medicare import set_seed, get_iter, DataMedicare
+from dataset.dataset_medicare import set_seed, get_iter, DataMedicare
 
 
 def main(args: argparse.Namespace) -> None:
@@ -85,13 +85,13 @@ def main(args: argparse.Namespace) -> None:
     
     tmin, tmax = data.treatment_norm_min, data.treatment_norm_max
     if shift_type == "cutoff":
-        naaqs = np.array([data.treatment_norm_max, 20, 15, 12, 11, 10, 9, 8], dtype=np.float32)
+        naaqs = np.array([data.treatment_norm_max, 15, 12, 11, 10, 9, 8, 7, 6], dtype=np.float32)
         delta_list_unscaled = naaqs
         delta_list = (delta_list_unscaled - tmin) / (tmax - tmin)
     elif args.shift_type == "percent":
         naaqs = np.array([12, 11, 10, 9, 8], dtype=np.float32)
         quantiles = [0.99, 0.95, 0.9, 0.75, 0.5, 0.25]
-        steps = 10
+        steps = 20
         t = torch.cat([train_data["treatment"], test_data["treatment"]])
         delta_list = np.linspace(0.0, 0.5, num=steps, dtype=np.float32).tolist()
         delta_list_unscaled = 100 *  np.array(delta_list)
@@ -177,6 +177,11 @@ def main(args: argparse.Namespace) -> None:
 
     if args.tr == "discrete" or not args.tr_reg:
         targeted_regularizer = torch.zeros(len(delta_list), device=dev)
+        if args.tr == "original":
+            targeted_regularizer.requires_grad_(True)
+            optim_params.append(
+                {"params": targeted_regularizer, "momentum": 0.0, "weight_decay": 0.0}
+            )
     elif args.tr == "vc":
         targeted_regularizer = TargetedRegularizerCoeff(
             degree=2,
@@ -252,7 +257,7 @@ def main(args: argparse.Namespace) -> None:
 
             # 2. outcome loss
             lp = model_output["predicted_outcome"]
-            y_hat = offset * lp.exp()
+            y_hat = offset * F.softplus(lp)
             outcome_loss = F.poisson_nll_loss(y_hat, y, log_input = False)
             losses["outcome_loss"].append(outcome_loss.item())
             total_loss = total_loss + outcome_loss
@@ -276,27 +281,27 @@ def main(args: argparse.Namespace) -> None:
                     eps = targeted_regularizer[j]
                 elif args.tr == "vc":
                     eps = targeted_regularizer(torch.full_like(t, d))
-                ratio = log_ratio.clamp(-10, 10).exp()
+                ratio = log_ratio.clamp(-5, 5).exp()
                 ratio_ = ratio.detach() if args.detach_ratio else ratio
                 if args.ratio_norm:
                     ratio_ = ratio_ / ratio_.mean()
                 if args.pert == "simple":
-                    y_pert = y_hat + eps
+                    y_pert = y_hat * eps.exp()
                     # L = (ratio_ * (y_pert - y).pow(2)).mean()
-                    L = (ratio_ * F.poisson_nll_loss(y_pert.clamp(min=0), y, log_input=False, reduction='none')).mean()
+                    L = (ratio_ * F.poisson_nll_loss(y_pert, y, log_input=False, reduction='none')).mean()
                     with torch.no_grad():
-                        bias = (ratio_ * (y - y_hat)).mean() / ratio_.mean()
+                        bias = (ratio_ * y).mean().log() - (ratio_ * y_hat).mean().log()
                 elif args.pert == "original":
-                    y_pert = y_hat + ratio_ * eps
+                    y_pert = y_hat * torch.exp(ratio_ * eps)
                     # L = F.mse_loss(y_pert, y)
-                    L = F.poisson_nll_loss(y_pert.clamp(min=0), y, log_input=False)
+                    L = F.poisson_nll_loss(y_pert, y, log_input=False)
                     with torch.no_grad():
-                        bias = (ratio_ * (y - y_hat)).mean() / ratio_.pow(2).mean()
-                if args.tr == "discrete": # manual update of epsilon
+                        bias = 0.0  # (ratio_ * (y - y_hat)).mean() / ratio_.pow(2).mean()
+                if args.tr == "discrete" and args.pert == "simple": # manual update of epsilon
                     biases[j] = bias
                     # eps.add_((bias - eps).item(), alpha=args.eps_lr)
                 tr_losses.append(L)
-            tr_losses = sum(tr_losses)
+            tr_losses = sum(tr_losses) / len(delta_list)
             if args.tr_reg:
                 total_loss = total_loss + args.beta * tr_losses
             losses["tr_loss"].append(tr_losses.item())
@@ -365,7 +370,7 @@ def main(args: argparse.Namespace) -> None:
                     t, x, y, offset = [u[ix] for u in (t, x, y, offset)]
                     output = model.forward(t, x)
                     z, lp = output["z"], output["predicted_outcome"]
-                    y_hat = offset * lp.exp()
+                    y_hat = offset * F.softplus(lp)
                     val_losses = []
                     for j, d in enumerate(delta_list):
                         if args.ratio != "c_ratio":
@@ -388,9 +393,9 @@ def main(args: argparse.Namespace) -> None:
                             elif args.tr == "vc":
                                 eps = best_tr(torch.full_like(t, d))
                             if args.pert == "original":
-                                y_pert = y_hat + eps * ratio
+                                y_pert = y_hat * torch.exp(eps * ratio)
                             elif args.pert == "simple":
-                                y_pert= y_hat + eps
+                                y_pert= y_hat * eps.exp()
                         else:
                             y_pert = y_hat
                         val_losses.append((ratio * (y_pert - y).pow(2)).mean().item())
@@ -423,7 +428,8 @@ def main(args: argparse.Namespace) -> None:
                     t, x, y, offset = [u[ix] for u in (t, x, y, offset)]
                     best_model_output = best_model.forward(t, x)
                     z = best_model_output["z"]
-                    y_hat = offset * best_model_output['predicted_outcome'].exp()
+                    lp = best_model_output['predicted_outcome']
+                    y_hat = offset * F.softplus(lp)
 
                     # dictionaries for all kind of estimates
                     # ipw_estims = []
@@ -461,11 +467,11 @@ def main(args: argparse.Namespace) -> None:
                         elif args.tr == "vc":
                             eps = best_tr(torch.full_like(t, d))
                         if args.pert == "original":
-                            y_pert = y_hat + eps * ratio
-                            y_pert_delta = y_delta + eps * ratio
+                            y_pert = y_hat * torch.exp(eps * ratio)
+                            y_pert_delta = y_delta * torch.exp(eps * ratio)
                         elif args.pert == "simple":
-                            y_pert = y_hat + eps
-                            y_pert_delta = y_delta + eps
+                            y_pert = y_hat * eps.exp()
+                            y_pert_delta = y_delta * eps.exp()
                         estim = (ratio * (y - y_pert)).mean() + y_pert_delta.mean()
                         aipw_estims.append(estim.item())
 
@@ -511,38 +517,45 @@ def main(args: argparse.Namespace) -> None:
 
                 # plot curves
                 if shift_type == "cutoff":
-                    _, ax = pplt.subplots([1, 2], figsize=(7, 3), wspace=5)
+                    # _, ax = pplt.subplots([1, 2], figsize=(7, 3), wspace=5)
+                    _, ax = pplt.subplots([1], figsize=(3.5, 2.5))
                 elif shift_type == "percent":
-                    _, ax = pplt.subplots([[1, 2], [3, 4]], figsize=(7, 5), hspace=1, wspace=5, sharey=False)
+                    # _, ax = pplt.subplots([[1, 2], [3, 4]], figsize=(7, 5), hspace=1, wspace=5, sharey=False)
+                    _, ax = pplt.subplots([[1, 2, 3]], figsize=(9, 3), hspace=1, wspace=5, share=False)
                 # plt.subplots_adjust(wspace=0.5, hspace=0.5)
-                pct = df.train_tr_estim / df.train_tr_estim.iloc[0] - 1
+                # for now make a weighted average, whiles we figure out evaluating the entire data
+                pct_tr = df.train_tr_estim / df.train_tr_estim.iloc[0] - 1
+                pct_val = df.test_tr_estim / df.test_tr_estim.iloc[0] - 1
+                N_tr, N_val = train_data["treatment"].shape[0], test_data["treatment"].shape[0]
+                pct = (N_tr * pct_tr + N_val * pct_val) / (N_tr + N_val)
                 ax[0].plot(
-                    delta_list_unscaled, 100 * pct, label="Train", c="blue", ls="--"
+                    delta_list_unscaled, 100 * pct, c="blue", ls="--"
                 )
-                pct = df.test_tr_estim / df.test_tr_estim.iloc[0] - 1
-                ax[1].plot(
-                    delta_list_unscaled, 100 * pct, label="Test", c="red", ls="--"
-                )
+               
+                # ax[1].plot(
+                #     delta_list_unscaled, 100 * pct_val, label="Test", c="red", ls="--"
+                # )
                 fig_path = f"{args.rdir}/{args.dataset}/{edir}/fig.png"
-                ax[0].legend(); ax[0].set_ylabel("Reduction in deaths (%)");
-                ax[1].legend(); ax[1].set_ylabel("Reduction in deaths (%)"); 
+                ax[0].legend(framealpha=0.5); ax[0].set_ylabel("Reduction in deaths (%)");
+                # ax[1].legend(); ax[1].set_ylabel("Reduction in deaths (%)"); 
                 
                 if shift_type == "cutoff":
-                    ax[0].set_xlim(8, 14)
-                    ax[1].set_xlim(8, 14)
-                    for k in range(2):
-                        ax[k].set_xlabel("NAAQS")
+                    ax[0].set_xlim(6, 15)
+                    ax[0].set_xlabel("NAAQS cutoff")
+                    # ax[1].set_xlim(8, 14)
+                    # for k in range(2):
+                    #     ax[k].set_xlabel("NAAQS")
 
                 if shift_type == "percent":
                     # plut naaq compliance
-                    ax[2].plot(delta_list_unscaled, misaligned, label=naaqs.astype(int))
-                    ax[2].set_ylabel("Zipcode-years above threshold (%)"); 
-                    ax[2].legend(title="NAAQS")
-                    ax[3].plot(delta_list_unscaled, quantmat, label=quantiles)
-                    ax[3].set_ylabel("PM 2.5  ($\mu g/m^3$)"); 
-                    ax[3].legend(title="Quantile")
-                    for k in range(4):
-                        ax[k].set_xlabel("Percent reduction (%)")
+                    ax[1].plot(delta_list_unscaled, misaligned, label=naaqs.astype(int))
+                    ax[1].set_ylabel("Zipcode-years above threshold (%)"); 
+                    ax[1].legend(title="NAAQS threshold", framealpha=0.5)
+                    ax[2].plot(delta_list_unscaled, quantmat, label=[f"{int(100*q)}%" for q in quantiles])
+                    ax[2].set_ylabel("$PM_{2.5}$ ($\mu g/m^3$)"); 
+                    ax[2].legend(title="Quantiles", framealpha=0.5)
+                    for k in range(3):
+                        ax[k].set_xlabel("$PM_{2.5}$ reduction (%)")
                 
                 plt.savefig(fig_path, bbox_inches='tight')
                 plt.close()
@@ -555,7 +568,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--n_grid", default=30, type=int)
     parser.add_argument(
-        "--pert", default="original", type=str, choices=("original", "simple")
+        "--pert", default="simple", type=str, choices=("original", "simple")
     )
     parser.add_argument("--detach_ratio", default=False, action="store_true")
     parser.add_argument("--eval_every", default=10, type=int)
@@ -569,13 +582,13 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", default=2000, type=int)
     parser.add_argument("--wd", default=1e-3, type=float)
     parser.add_argument("--lr", default=1e-3, type=float) 
-    parser.add_argument("--ls", default=0.01, type=float) 
-    parser.add_argument("--eps_lr", default=0.001, type=float) 
+    parser.add_argument("--ls", default=0.0, type=float) 
+    parser.add_argument("--eps_lr", default=0.01, type=float) 
     parser.add_argument("--beta", default=0.1, type=float)
     parser.add_argument("--noise", default=0.5, type=float)
     parser.add_argument("--train_prop", default=0.8, type=float)
     parser.add_argument("--silent", default=False, action="store_true")
-    parser.add_argument("--ratio_norm", default=False, action="store_true")
+    parser.add_argument("--ratio_norm", default=True, action="store_true")
     parser.add_argument("--dropout", default=0.05, type=float)
     parser.add_argument("--mc_dropout", default=False, action="store_true")
 

@@ -49,6 +49,12 @@ case $set in
     regularizations=("" "--tr_reg" "--tr_reg --ratio_norm")
     rdir="results/tres_ratio_norm/"
     ;;
+    8)
+    # Set 8. Density Ablation
+    extra_flags="--noise 0.1"
+    regularizations=("--ratio c_ratio --tr_reg" "--ratio gps_ratio --tr_reg" "--ratio erm --tr_reg" "")
+    rdir="results/tres_ratios/"
+    ;;
     *)
     echo "Wrong input!"
     exit 2
@@ -69,7 +75,12 @@ do
             do
                 s=$((num_parallel*i + c))
                 # we use CUDA_VISIBLE_DEVICES in case of gpus
-                if [ $num_gpus -gt 0 ]; then export CUDA_VISIBLE_DEVICES=$((c % num_gpus)); fi
+                if [ $num_gpus -gt 0 ]
+                then 
+                    export CUDA_VISIBLE_DEVICES=$((c % num_gpus))
+                else
+                    export CUDA_VISIBLE_DEVICES=''
+                fi
                 flags="--dataset ${dset} ${reg} ${extra_flags}"
                 python main_tres.py --seed=$s --silent --rdir ${rdir} --edir "${flags}" ${flags} &
             done

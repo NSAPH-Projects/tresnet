@@ -39,7 +39,7 @@ def main(args: argparse.Namespace) -> None:
     delta_list = np.linspace(0.5 / steps, 0.5, num=steps, dtype=np.float32).tolist()
 
     # make dataset from available optionss
-    D = make_dataset(args.dataset, delta_list, n_train=args.n_train, n_test=args.n_test, noise_scale=args.noise)
+    D = make_dataset(args.dataset, delta_list, n_train=args.n_train, n_test=args.n_test, noise_scale=args.noise, count=True)
     train_matrix = D["train_matrix"].to(dev)
     test_matrix = D["train_matrix"].to(dev)
     shift_type = D["shift_type"]
