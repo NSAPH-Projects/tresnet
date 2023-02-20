@@ -571,15 +571,15 @@ if __name__ == "__main__":
     parser.add_argument("--val", default="test", type=str, choices=("is", "val", "none"))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
-    parser.add_argument("--n_epochs", default=5000, type=int)
+    parser.add_argument("--n_epochs", default=2000, type=int)
     parser.add_argument("--batch_size", default=4000, type=int)
     parser.add_argument("--eval_every", default=100, type=int)
     parser.add_argument("--wd", default=5e-3, type=float)
     parser.add_argument("--lr", default=1e-4, type=float) 
     parser.add_argument("--ls", default=0.1, type=float) 
-    # parser.add_argument("--eps_lr", default=0.1, type=float) 
+
     parser.add_argument("--beta", default=0.1, type=float)
-    parser.add_argument("--noise", default=0.5, type=float)  # it is 0.5 in vcnet paper
+    parser.add_argument("--noise", default=0.1, type=float)  # it is 0.5 in vcnet paper
     parser.add_argument("--silent", default=False, action="store_true")
     parser.add_argument("--ratio_norm", default=True, action="store_true")
     parser.add_argument("--dropout", default=0.05, type=float)
@@ -603,6 +603,4 @@ if __name__ == "__main__":
     parser.add_argument("--reg_multiscale", default=False, action="store_true")
 
     args = parser.parse_args()
-
-    with torch.autograd.set_detect_anomaly(True):
-        main(args)
+    main(args)
