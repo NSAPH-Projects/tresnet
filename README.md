@@ -1,7 +1,8 @@
 # **T**argeted **R**egularization for **E**xposure **S**hifts with Neural **Net**works (TRESNet)
 
-This is the official PyTorch implementation of our paper.
+This is the official PyTorch implementation of our paper:
 
+*Causal Shift-Response Functions with Neural Networks: The Health Benefits of Lowering Air Quality Standards in the US*. ICML 2023 submission.
 
 # Reproducing the paper results 
 
