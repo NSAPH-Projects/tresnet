@@ -1,5 +1,5 @@
 import torch
-from .ratios import log_density_ratio_under_shift
+from ..tresnet.ratios import log_density_ratio_under_shift
 
 
 def criterion(

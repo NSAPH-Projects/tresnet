@@ -18,7 +18,7 @@ from utils.loss import criterion
 
 from models.models import VCNet
 from models.modules import TargetedRegularizerCoeff
-from dataset.dataset import get_iter
+from dataset.datasets import get_iter
 
 # TODO: Change shuffling in dataloader (get_iter) to True here and in legacy
 
