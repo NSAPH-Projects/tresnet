@@ -1,8 +1,7 @@
 #!/bin/bash
-
-num_parallel=5
-num_seeds=50
+num_parallel=4
 num_gpus=0
+num_seeds=50
 
 set=${1:-3}    
 
@@ -30,22 +29,17 @@ case $set in
     exit 2
 esac
 
-# for dset in "${datasets[@]}"
-# do
-#     for reg in "${regularizations[@]}"
-#     do
-#         printf "====== Dataset: %s, Reg: %s ======" "${dset}" "${reg}"
-        for (( i=0; i<$((num_seeds / num_parallel)); i++))
-        do
-            for (( c=0; c<$num_parallel; c++))
-            do
-                s=$((num_parallel*i + c))
-                # we use CUDA_VISIBLE_DEVICES in case of gpus
-                if [ $num_gpus -gt 0 ]; then export CUDA_VISIBLE_DEVICES=$((c % num_gpus)); fi
-                flags="${extra_flags}"
-                python main_tres_medicare.py --seed=$((s + num_seeds)) ${flags} --rdir="${rdir}" --edir="${flags}" &
-            done
-            wait
-        done
-#     done
-# done
+
+for (( i=0; i<$((num_seeds / num_parallel)); i++))
+do
+    for (( c=0; c<$num_parallel; c++))
+    do
+        s=$((num_parallel*i + c))
+        # we use CUDA_VISIBLE_DEVICES in case of gpus
+        if [ $num_gpus -gt 0 ]; then export CUDA_VISIBLE_DEVICES=$((c % num_gpus)); fi
+        flags="${extra_flags}"
+        python main_medicare.py --seed=$((s + num_seeds)) ${flags} --rdir="${rdir}" --edir="${flags}" &
+    done
+    wait
+done
+

@@ -1,6 +1,8 @@
+# parts of this code are modified from https://github.com/lushleaf/varying-coefficient-net-with-functional-tr
+# which contains vcnet and drnet implementations.
+
 import torch
 from torch import nn
-
 import numpy
 
 

@@ -9,6 +9,7 @@ data_medicare/
 # Local for mauricio; just accept notebooks in this folder
 !notebooks/*.ipynb
 results*
+notebooks/figures
 
 # Byte-compiled / osptimized / DLL files
 __pycache__/

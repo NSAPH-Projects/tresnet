@@ -4,14 +4,14 @@ import argparse
 from collections import defaultdict, deque
 import pandas as pd
 import os
-import utils.ratios as ratios
+import tresnet.ratios as ratios
 import yaml
 import matplotlib.pyplot as plt
 
 plt.ioff()
 
-from models.DensityNet import DensityNet
-from dataset.dataset import get_iter, make_dataset, DATASETS, set_seed
+from tresnet.models import DensityNet
+from dataset.datasets import get_iter, make_dataset, DATASETS, set_seed
 
 
 def main(args: argparse.Namespace) -> None:
