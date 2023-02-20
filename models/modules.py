@@ -433,3 +433,210 @@ def get_linear_interpolation_params(treatment, num_grid, a=0, b=1):
         upper_grid_idx.int().tolist(),
         distance_to_lower_grid,
     )
+
+
+class Treat_Linear(nn.Module):
+    def __init__(self, ind, outd, act='relu', istreat=1, isbias=1, islastlayer=0):
+        super(Treat_Linear, self).__init__()
+        # ind does NOT include the extra concat treatment
+        self.ind = ind
+        self.outd = outd
+        self.isbias = isbias
+        self.istreat = istreat
+        self.islastlayer = islastlayer
+
+        self.weight = nn.Parameter(torch.rand(self.ind, self.outd), requires_grad=True)
+
+        if self.isbias:
+            self.bias = nn.Parameter(torch.rand(self.outd), requires_grad=True)
+        else:
+            self.bias = None
+
+        if self.istreat:
+            self.treat_weight = nn.Parameter(torch.rand(1, self.outd), requires_grad=True)
+        else:
+            self.treat_weight = None
+
+        if act == 'relu':
+            self.act = nn.ReLU(inplace=True)
+        elif act == 'tanh':
+            self.act = nn.Tanh()
+        elif act == 'sigmoid':
+            self.act = nn.Sigmoid()
+        else:
+            self.act = None
+
+    def forward(self, x):
+        # x: batch_size * (treatment, other feature)
+        x_feature = x[:, 1:]
+        x_treat = x[:, [0]]
+
+        out = torch.matmul(x_feature, self.weight)
+
+        if self.istreat:
+            out = out + torch.matmul(x_treat, self.treat_weight)
+        if self.isbias:
+            out = out + self.bias
+
+        if self.act is not None:
+            out = self.act(out)
+
+        if not self.islastlayer:
+            out = torch.cat((x_treat, out), 1)
+
+        return out
+
+class Multi_head(nn.Module):
+    def __init__(self, cfg, isenhance):
+        super(Multi_head, self).__init__()
+
+        self.cfg = cfg # cfg does NOT include the extra dimension of concat treatment
+        self.isenhance = isenhance  # set 1 to concat treatment every layer/ 0: only concat on first layer
+
+        # we default set num of heads = 5
+        self.pt = [0.0, 0.2, 0.4, 0.6, 0.8, 1.]
+
+        self.outdim = -1
+        # construct the predicting networks
+        blocks = []
+        for layer_idx, layer_cfg in enumerate(cfg):
+            if len(layer_cfg) == 3:
+                layer_cfg = (layer_cfg[0], layer_cfg[1], 'relu', layer_cfg[2])
+            if layer_idx == len(cfg) - 1:  # last layer
+                self.outdim = layer_cfg[1]
+                if layer_idx == 0 or self.isenhance:
+                    istreat = 1
+                else:
+                    istreat = 0
+                last_layer = Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
+                                          islastlayer=1)
+            else:
+                if layer_idx == 0 or self.isenhance:
+                    istreat = 1
+                else:
+                    istreat = 0
+                blocks.append(Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
+                                           islastlayer=0))
+        blocks.append(last_layer)
+        self.Q1 = nn.Sequential(*blocks)
+
+        blocks = []
+        for layer_idx, layer_cfg in enumerate(cfg):
+            if layer_idx == len(cfg) - 1:  # last layer
+                if len(layer_cfg) == 3:
+                    layer_cfg = (layer_cfg[0], layer_cfg[1], 'relu', layer_cfg[2])
+                if layer_idx == 0 or self.isenhance:
+                    istreat = 1
+                else:
+                    istreat = 0
+                last_layer = Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat,
+                                          isbias=layer_cfg[2],
+                                          islastlayer=1)
+            else:
+                if layer_idx == 0 or self.isenhance:
+                    istreat = 1
+                else:
+                    istreat = 0
+                blocks.append(
+                    Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
+                                 islastlayer=0))
+        blocks.append(last_layer)
+        self.Q2 = nn.Sequential(*blocks)
+
+        blocks = []
+        for layer_idx, layer_cfg in enumerate(cfg):
+            if layer_idx == len(cfg) - 1:  # last layer
+                if layer_idx == 0 or self.isenhance:
+                    istreat = 1
+                else:
+                    istreat = 0
+                last_layer = Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat,
+                                          isbias=layer_cfg[2],
+                                          islastlayer=1)
+            else:
+                if layer_idx == 0 or self.isenhance:
+                    istreat = 1
+                else:
+                    istreat = 0
+                blocks.append(
+                    Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
+                                 islastlayer=0))
+        blocks.append(last_layer)
+        self.Q3 = nn.Sequential(*blocks)
+
+        blocks = []
+        for layer_idx, layer_cfg in enumerate(cfg):
+            if layer_idx == len(cfg) - 1:  # last layer
+                if layer_idx == 0 or self.isenhance:
+                    istreat = 1
+                else:
+                    istreat = 0
+                last_layer = Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat,
+                                          isbias=layer_cfg[2],
+                                          islastlayer=1)
+            else:
+                if layer_idx == 0 or self.isenhance:
+                    istreat = 1
+                else:
+                    istreat = 0
+                blocks.append(
+                    Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
+                                 islastlayer=0))
+        blocks.append(last_layer)
+        self.Q4 = nn.Sequential(*blocks)
+
+        blocks = []
+        for layer_idx, layer_cfg in enumerate(cfg):
+            if layer_idx == len(cfg) - 1:  # last layer
+                if layer_idx == 0 or self.isenhance:
+                    istreat = 1
+                else:
+                    istreat = 0
+                last_layer = Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat,
+                                          isbias=layer_cfg[2],
+                                          islastlayer=1)
+            else:
+                if layer_idx == 0 or self.isenhance:
+                    istreat = 1
+                else:
+                    istreat = 0
+                blocks.append(
+                    Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
+                                 islastlayer=0))
+        blocks.append(last_layer)
+        self.Q5 = nn.Sequential(*blocks)
+
+    def forward(self, x):
+        # x = [treatment, features]
+        out = torch.zeros(x.shape[0], self.outdim).to(x.device)
+        t = x[:, 0]
+
+        idx1 = list(set(list(torch.where(t >= self.pt[0])[0].numpy())) & set(torch.where(t < self.pt[1])[0].numpy()))
+        idx2 = list(set(list(torch.where(t >= self.pt[1])[0].numpy())) & set(torch.where(t < self.pt[2])[0].numpy()))
+        idx3 = list(set(list(torch.where(t >= self.pt[2])[0].numpy())) & set(torch.where(t < self.pt[3])[0].numpy()))
+        idx4 = list(set(list(torch.where(t >= self.pt[3])[0].numpy())) & set(torch.where(t < self.pt[4])[0].numpy()))
+        idx5 = list(set(list(torch.where(t >= self.pt[4])[0].numpy())) & set(torch.where(t <= self.pt[5])[0].numpy()))
+
+        if idx1:
+            out1 = self.Q1(x[idx1, :])
+            out[idx1, :] = out[idx1, :] + out1
+
+        if idx2:
+            out2 = self.Q2(x[idx2, :])
+            out[idx2, :] = out[idx2, :] + out2
+
+        if idx3:
+            out3 = self.Q3(x[idx3, :])
+            out[idx3, :] = out[idx3, :] + out3
+
+        if idx4:
+            out4 = self.Q4(x[idx4, :])
+            out[idx4, :] = out[idx4, :] + out4
+
+        if idx5:
+            out5 = self.Q5(x[idx5, :])
+            out[idx5, :] = out[idx5, :] + out5
+
+        return out
+
+

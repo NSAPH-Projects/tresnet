@@ -16,7 +16,7 @@ from utils.loss import criterion
 # 4. Document all the datasets
 # 5. Run experiments
 
-from models.VCNet import VCNet
+from models.models import VCNet
 from models.modules import TargetedRegularizerCoeff
 from dataset.dataset import get_iter
 

@@ -283,7 +283,14 @@ def make_dataset(
     y, noise = outcome(D, dataset, noise_scale=0.5)
 
     if count:
-        y = y.exp().round()
+        scale = y.max()
+        y = (2.0 * y / scale).exp().round()
+        # r = 5.0
+        # m = y.mean()
+        # y2 = (y - m) ** 2
+        # a, b = y2.min(), y2.max()
+        # y2_unit = (y2 - a) / (b - a)
+        # y = (r * y2_unit).exp().round()
 
     train_matrix = cat([t[train_ix, None], x[train_ix], y[train_ix, None]], dim=1)
     test_matrix = cat([t[test_ix, None], x[test_ix], y[test_ix, None]], dim=1)
@@ -306,7 +313,10 @@ def make_dataset(
     cfs = stack([outcome(D, dataset, treatment=tcf, noise=noise)[0] for tcf in shifted_t], 1)
 
     if count:
-        ycf = ycf.exp().round()
+        cfs = (2.0 * cfs / scale).exp().round()
+        # cfs2 = (cfs - m) ** 2
+        # cfs2_unit = (cfs2 - a) / (b - a)
+        # cfs = (r * cfs2_unit).exp().round()
 
     # average the counterfactuals for value of delta
     srf_train = cfs[train_ix, :].mean(0)

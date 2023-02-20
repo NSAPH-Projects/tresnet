@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from .modules import Encoder, DiscreteDensityEstimator, VCPredictionHead, VCDiscreteEstimator
+from .modules import Encoder, DiscreteDensityEstimator, Multi_head, Treat_Linear, VCPredictionHead, VCDiscreteEstimator
 import numpy
 
 
@@ -104,3 +104,51 @@ class RatioNet(nn.Module):
         self.encoder._initialize_weights()
         self.ratio_estimator._initialize_weights()
         self.prediction_head._initialize_weights()
+
+
+class Drnet(nn.Module):
+    def __init__(self, encoder_config, num_grids, pred_head_config, isenhance, dropout = 0.0):
+        super(Drnet, self).__init__()
+
+        self.encoder = Encoder(encoder_config, dropout=dropout)
+        self.dropout = dropout
+
+        density_estimator_in_dimension = encoder_config[-1][1]
+
+        self.density_estimator = DiscreteDensityEstimator(
+            density_estimator_in_dimension, num_grids
+        )
+        self.prediction_head = Multi_head(pred_head_config, isenhance)
+
+
+    def forward(self, treatment, confounders):
+        z = self.encoder(confounders)
+
+        # Density estimator
+        probability_score = self.density_estimator(treatment, z)
+
+        # Prediction head
+        t_hidden = torch.cat([treatment[:, None], z], 1)
+        predicted_outcome = self.prediction_head(t_hidden)
+        return {
+            "z": z,
+            "prob_score": probability_score,
+            "predicted_outcome": predicted_outcome.squeeze(1),
+        }
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, Treat_Linear):
+                m.weight.data.normal_(0, 0.01)
+                if m.isbias:
+                    m.bias.data.zero_()
+                if m.istreat:
+                    m.treat_weight.data.normal_(0, 1.)  # this needs to be initialized large to have better performance
+            elif isinstance(m, nn.Linear):
+                m.weight.data.normal_(0, 0.01)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+        self.encoder._initialize_weights()
+        self.density_estimator._initialize_weights()
+        # self.prediction_head._initialize_weights()
+    

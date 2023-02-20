@@ -11,13 +11,10 @@ from copy import deepcopy
 from tqdm import tqdm
 import proplot as pplt
 
-plt.ioff()
-# from matplotlib import rc
-# rc("pdf", fonttype=3)
-# rc('font',**{'family':'serif'})
-# rc('text', usetex=True)
+import matplotlib
+matplotlib.use('agg') 
 
-from models.VCNet import VCNet, RatioNet
+from models.models import VCNet, RatioNet
 from utils import ratios
 from models.modules import TargetedRegularizerCoeff
 #from dataset.dataset import get_iter, make_dataset, DATASETS, set_seed
@@ -85,7 +82,7 @@ def main(args: argparse.Namespace) -> None:
     
     tmin, tmax = data.treatment_norm_min, data.treatment_norm_max
     if shift_type == "cutoff":
-        naaqs = np.array([data.treatment_norm_max, 15, 12, 11, 10, 9, 8, 7, 6], dtype=np.float32)
+        naaqs = np.array([30, 15, 12, 11, 10, 9, 8, 7, 6], dtype=np.float32)
         delta_list_unscaled = naaqs
         delta_list = (delta_list_unscaled - tmin) / (tmax - tmin)
     elif args.shift_type == "percent":
@@ -207,15 +204,15 @@ def main(args: argparse.Namespace) -> None:
 
     # training loop
     train_loader = get_iter(train_data, batch_size=args.batch_size, shuffle=True)
-    eps_lr = 1 / len(train_loader)
+    eps_lr = 0.25 / len(train_loader)
 
-    for epoch in range(args.n_epochs):
+    for epoch in tqdm(range(args.n_epochs), disable=args.silent):
         # dict to store all the losses per batch
         losses = defaultdict(lambda: deque(maxlen=len(train_loader)))
 
         # iterate each batch
         # for _, item in enumerate(train_loader):
-        for _, (t, x, y, offset) in tqdm(enumerate(train_loader), total=len(train_loader)):
+        for _, (t, x, y, offset) in tqdm(enumerate(train_loader), total=len(train_loader), disable=True):
 
             # Now the offset is avilable as above, try it out 
 
@@ -258,7 +255,7 @@ def main(args: argparse.Namespace) -> None:
 
             # 2. outcome loss
             lp = model_output["predicted_outcome"]
-            y_hat = offset * F.softplus(lp)
+            y_hat = offset * torch.sigmoid(lp)
             outcome_loss = F.poisson_nll_loss(y_hat, y, log_input = False)
             losses["outcome_loss"].append(outcome_loss.item())
             total_loss = total_loss + outcome_loss
@@ -352,7 +349,7 @@ def main(args: argparse.Namespace) -> None:
             losses["total_loss"].append(total_loss.item())
 
             total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
+            torch.nn.utils.clip_grad_value_(model.parameters(), 10.0)
             optimizer.step()
 
             if args.tr == 'discrete':
@@ -360,31 +357,35 @@ def main(args: argparse.Namespace) -> None:
             # update epsilon (coordinate ascent)
 
         # evaluation
-        if epoch == 0 or (epoch + 1) % args.eval_every == 0:
+        # if epoch == 0 or (epoch + 1) % args.eval_every == 0:
+        if (epoch + 1) % args.eval_every == 0:
             model.eval()
             with torch.no_grad():
                 # replace best model if improves
-                if args.val == "is":
+                if args.val in ("is", "test"):
                     M = test_data
                     t, x, y, offset = M["treatment"], M["covariates"], M["outcome"], M["offset"]
                     ix = torch.LongTensor(np.random.choice(len(t), size=50000)).to(dev)
                     t, x, y, offset = [u[ix] for u in (t, x, y, offset)]
                     output = model.forward(t, x)
                     z, lp = output["z"], output["predicted_outcome"]
-                    y_hat = offset * F.softplus(lp)
+                    y_hat = offset * torch.sigmoid(lp)
                     val_losses = []
                     for j, d in enumerate(delta_list):
-                        if args.ratio != "c_ratio":
-                            log_ratio = ratios.log_density_ratio_under_shift(
-                                t=t,
-                                delta=torch.full_like(t, d),
-                                density_estimator=best_model.density_estimator,
-                                z=z,
-                                shift_type=shift_type,
-                            )
+                        if args.val == "test":
+                            ratio = torch.ones_like(t)
                         else:
-                            log_ratio = model.log_ratio(t, z, j)
-                        ratio = log_ratio.clamp(-10, 10).exp()
+                            if args.ratio != "c_ratio":
+                                log_ratio = ratios.log_density_ratio_under_shift(
+                                    t=t,
+                                    delta=torch.full_like(t, d),
+                                    density_estimator=best_model.density_estimator,
+                                    z=z,
+                                    shift_type=shift_type,
+                                )
+                            else:
+                                log_ratio = model.log_ratio(t, z, j)
+                            ratio = log_ratio.clamp(-10, 10).exp()
                         if args.ratio_norm:
                             ratio = ratio / ratio.mean()
                         # ratio = 1
@@ -421,7 +422,7 @@ def main(args: argparse.Namespace) -> None:
                         print(f"  {k}: {np.mean(vec):.4f}")
 
                 # iptw estimates
-                df = pd.DataFrame({"delta": delta_list})
+                df = pd.DataFrame({"delta": delta_list, 'delta_unscaled': delta_list_unscaled})
                 for part in ("train", "test"):
                     M = train_data if part == "train" else test_data
                     t, x, y, offset = M["treatment"], M["covariates"], M["outcome"], M["offset"]
@@ -430,7 +431,7 @@ def main(args: argparse.Namespace) -> None:
                     best_model_output = best_model.forward(t, x)
                     z = best_model_output["z"]
                     lp = best_model_output['predicted_outcome']
-                    y_hat = offset * F.softplus(lp)
+                    y_hat = offset * torch.sigmoid(lp)
 
                     # dictionaries for all kind of estimates
                     # ipw_estims = []
@@ -462,7 +463,8 @@ def main(args: argparse.Namespace) -> None:
 
                         # A-IPTW estimates
                         t_delta = ratios.shift(t, d, shift_type)
-                        y_delta = offset * model.prediction_head(t_delta, z).exp()
+                        lp = model.prediction_head(t_delta, z)
+                        y_delta = offset * torch.sigmoid(lp)
                         if args.tr == "discrete":
                             eps = best_tr[j]
                         elif args.tr == "vc":
@@ -522,7 +524,7 @@ def main(args: argparse.Namespace) -> None:
                     _, ax = pplt.subplots([1], figsize=(3.5, 2.5))
                 elif shift_type == "percent":
                     # _, ax = pplt.subplots([[1, 2], [3, 4]], figsize=(7, 5), hspace=1, wspace=5, sharey=False)
-                    _, ax = pplt.subplots([[1, 2, 3]], figsize=(9, 3), hspace=1, wspace=5, share=False)
+                    _, ax = pplt.subplots([1], figsize=(3.5, 2.5))
                 # plt.subplots_adjust(wspace=0.5, hspace=0.5)
                 # for now make a weighted average, whiles we figure out evaluating the entire data
                 pct_tr = df.train_tr_estim / df.train_tr_estim.iloc[0] - 1
@@ -530,7 +532,7 @@ def main(args: argparse.Namespace) -> None:
                 N_tr, N_val = train_data["treatment"].shape[0], test_data["treatment"].shape[0]
                 pct = (N_tr * pct_tr + N_val * pct_val) / (N_tr + N_val)
                 ax[0].plot(
-                    delta_list_unscaled, 100 * pct, c="blue", ls="--"
+                    delta_list_unscaled, 100 * pct, c="blue",
                 )
                
                 # ax[1].plot(
@@ -542,24 +544,30 @@ def main(args: argparse.Namespace) -> None:
                 
                 if shift_type == "cutoff":
                     ax[0].set_xlim(6, 15)
-                    ax[0].set_xlabel("NAAQS cutoff")
+                    ax[0].set_xlabel("NAAQS cutoff ($\mu g/m^3$)")
                     # ax[1].set_xlim(8, 14)
                     # for k in range(2):
                     #     ax[k].set_xlabel("NAAQS")
 
                 if shift_type == "percent":
-                    # plut naaq compliance
-                    ax[1].plot(delta_list_unscaled, misaligned, label=naaqs.astype(int))
-                    ax[1].set_ylabel("Zipcode-years above threshold (%)"); 
-                    ax[1].legend(title="NAAQS threshold", framealpha=0.5)
-                    ax[2].plot(delta_list_unscaled, quantmat, label=[f"{int(100*q)}%" for q in quantiles])
-                    ax[2].set_ylabel("$PM_{2.5}$ ($\mu g/m^3$)"); 
-                    ax[2].legend(title="Quantiles", framealpha=0.5)
-                    for k in range(3):
-                        ax[k].set_xlabel("$PM_{2.5}$ reduction (%)")
+                    ax[0].set_xlabel("$PM_{2.5}$ reduction (%)")
                 
                 plt.savefig(fig_path, bbox_inches='tight')
                 plt.close()
+
+                if shift_type == "percent":
+                    _, ax2 = pplt.subplots([[1, 2]], figsize=(6.3, 3), hspace=1, wspace=5, share=False)
+                    ax2[0].plot(delta_list_unscaled, 100 * misaligned, label=naaqs.astype(int))
+                    ax2[0].set_ylabel("Zipcode-years above threshold (%)"); 
+                    ax2[0].legend(title="NAAQS threshold ($\mu g/m^3$)", framealpha=0.5)
+                    ax2[1].plot(delta_list_unscaled, quantmat, label=[f"{int(100*q)}%" for q in quantiles])
+                    ax2[1].set_ylabel("$PM_{2.5}$ ($\mu g/m^3$)"); 
+                    ax2[1].legend(title="Quantiles", framealpha=0.5)
+                    for l in range(2):
+                        ax2[l].set_xlabel("$PM_{2.5}$ reduction (%)")
+                    fig_path = f"{args.rdir}/{args.dataset}/{edir}/fig_quantiles.png"
+                    plt.savefig(fig_path, bbox_inches='tight')
+                    plt.close()
 
             model.train()
 
@@ -576,17 +584,17 @@ if __name__ == "__main__":
     parser.add_argument("--rdir", default="results", type=str)
     parser.add_argument("--edir", default=None, type=str)
     parser.add_argument("--opt", default="sgd", type=str, choices=("adam", "sgd"))
-    parser.add_argument("--val", default="is", type=str, choices=("is", None))
+    parser.add_argument("--val", default="test", type=str, choices=("is", "test", None))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
-    parser.add_argument("--n_epochs", default=100, type=int)
-    parser.add_argument("--batch_size", default=500, type=int)
-    parser.add_argument("--wd", default=3e-5, type=float)
+    parser.add_argument("--n_epochs", default=20, type=int)
+    parser.add_argument("--batch_size", default=4000, type=int)
+    parser.add_argument("--wd", default=5e-3, type=float)
     parser.add_argument("--lr", default=1e-4, type=float) 
-    parser.add_argument("--ls", default=0.0, type=float) 
+    parser.add_argument("--ls", default=0.1, type=float) 
     # parser.add_argument("--eps_lr", default=0.001, type=float) p
     parser.add_argument("--beta", default=0.1, type=float)
-    parser.add_argument("--noise", default=0.5, type=float)
+    # parser.add_argument("--noise", default=0.5, type=float)
     parser.add_argument("--train_prop", default=0.8, type=float)
     parser.add_argument("--silent", default=False, action="store_true")
     parser.add_argument("--ratio_norm", default=True, action="store_true")

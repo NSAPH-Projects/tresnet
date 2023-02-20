@@ -9,19 +9,19 @@ set=${1:-3}
 case $set in
     1)
     # Set 1. TR test
-    extra_flags="--tr_reg --shift_type=cutoff"
+    extra_flags="--tr_reg --ratio c_ratio --rdir=results --edir cutoff --eval_every 10 --n_epochs 40 --lr 0.0001 --ls 0.1"
     # regularizations=("")
     rdir="results/"
     ;;
     2)
     # Set 2. ERM percent
-    extra_flags="--tr_reg --shift_type=percent --ratio=erm"
+    extra_flags="--tr_reg --shift_type=percent --ratio=erm --n_epochs 20 --eval_every 20 --lr 0.0001 --ls 0.1"
     # regularizations=("")
     rdir="results/"
     ;;
     3)
     # Set 3. GPS=ratio percent
-    extra_flags="--tr_reg --shift_type=percent --ratio=gps_ratio"
+    extra_flags="--tr_reg --shift_type=percent --ratio=gps_ratio --n_epochs 20 --eval_every 20 --lr 0.0001 --ls 0.1 --batch_size 4000"
     # regularizations=("")
     rdir="results/"
     ;;
