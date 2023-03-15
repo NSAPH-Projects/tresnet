@@ -3,8 +3,15 @@
 *.ipynb
 .DS_store
 simu1/
+data/
+data_medicare/
 
-# Byte-compiled / optimized / DLL files
+# Local for mauricio; just accept notebooks in this folder
+!notebooks/*.ipynb
+results*
+notebooks/figures
+
+# Byte-compiled / osptimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -133,3 +140,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+.vscode/
+notebooks/test_dataset.ipynb
