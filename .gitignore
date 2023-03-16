@@ -138,3 +138,4 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .vscode/
+data/data_application.py

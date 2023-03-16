@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
 
+
 class Dataset_from_matrix(Dataset):
     """Face Landmarks dataset."""
 
@@ -21,9 +22,8 @@ class Dataset_from_matrix(Dataset):
         sample = self.data_matrix[idx, :]
         return (sample[0:-1], sample[-1])
 
+
 def get_iter(data_matrix, batch_size, shuffle=True):
     dataset = Dataset_from_matrix(data_matrix)
     iterator = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
     return iterator
-
-
