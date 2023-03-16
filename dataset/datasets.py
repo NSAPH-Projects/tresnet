@@ -238,8 +238,6 @@ def load_data(
 
         return D
 
-    elif dataset == "sim-B":  # Simulated data in SCIGAN (Bica et al., 2020)
-        raise NotImplementedError
     elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
     elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
@@ -305,7 +303,7 @@ def outcome(
         y = np.random.normal(hermit, 0.5**2)
 
         #! Dimeji:  I am assuming we don't need any noise in this case, so I set noise to None
-        return y, None
+        return torch.FloatTensor(y), None
 
     elif dataset == "ihdp-N":  # IHDP modification in VCNet (Niet et al., 2021)
         x1, x2, x3, x4, x5 = [x[:, j] for j in [0, 1, 2, 4, 5]]
