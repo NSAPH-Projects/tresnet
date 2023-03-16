@@ -49,8 +49,12 @@ DATASETS = (
 
 def get_iter(data_matrix, batch_size, **kwargs):
     # dataset = DatasetFromMatrix(data_matrix)
-    treatment, covariates, outcome = data_matrix[:, 0], data_matrix[:, 1:-1], data_matrix[:, -1]
-    dataset = TensorDataset(treatment, covariates, outcome )
+    treatment, covariates, outcome = (
+        data_matrix[:, 0],
+        data_matrix[:, 1:-1],
+        data_matrix[:, -1],
+    )
+    dataset = TensorDataset(treatment, covariates, outcome)
     iterator = DataLoader(dataset, batch_size=batch_size, **kwargs)
     return iterator
 
@@ -67,7 +71,10 @@ def set_seed(seed: int):
 
 
 def load_data(
-    dataset: str, n_train: Optional[int] = None, n_test: Optional[int] = None, noise_scale: float = 0.5
+    dataset: str,
+    n_train: Optional[int] = None,
+    n_test: Optional[int] = None,
+    noise_scale: float = 0.5,
 ) -> Tuple[int]:
     """n_train, n_test only useful for simulated datasets"""
     if dataset == "sim-N":  # simu1 simulated data in VCNet (Nie et al., 2021)
@@ -89,6 +96,49 @@ def load_data(
         train_ix = torch.arange(0, n_train)
         test_ix = torch.arange(n_train, n_train + n_test)
         D = {"x": x, "t": t, "train_ix": train_ix, "test_ix": test_ix}
+        return D
+
+    elif dataset == "sim-B":
+        n_confounders = 5
+        n_samples = 1000
+
+        diag = np.ones((n_confounders))
+        off_diag = np.full((n_confounders - 1), fill_value=0.2)  # [0]
+
+        # Create cov matrix
+        cov_matrix = np.zeros((n_confounders, n_confounders))
+
+        # Make the matrix tridiagonal
+        tridiagonal_matrix = (
+            cov_matrix + np.diag(diag, 0) + np.diag(off_diag, -1) + np.diag(off_diag, 1)
+        )
+
+        # x is the covariates, there are 5 covariates per sample
+        x = np.random.multivariate_normal(
+            mean=np.zeros((n_confounders,)), cov=tridiagonal_matrix, size=n_samples
+        )
+
+        np.random.seed(5)
+        beta = np.array(
+            [
+                np.random.uniform(low=-1, high=1, size=n_confounders)
+                for _ in range(n_samples)
+            ]
+        )
+        mu_t = np.sin((beta * x).sum(axis=1))
+
+        # t is the treatment
+        t = np.random.normal(mu_t)
+
+        ix_list = torch.randperm(n_samples)
+        train_ix = ix_list[:800]
+        test_ix = ix_list[800:]
+        D = {
+            "x": torch.FloatTensor(x),
+            "t": torch.FloatTensor(t),
+            "train_ix": train_ix,
+            "test_ix": test_ix,
+        }
         return D
 
     elif dataset == "ihdp-N":  # IHDP modification in VCNet (Nie et al., 2021)
@@ -126,7 +176,7 @@ def load_data(
         #! Mauricio: ok
         ix_list = torch.randperm(n)
         train_ix = ix_list[:473]
-        test_ix  = ix_list[473:]
+        test_ix = ix_list[473:]
         D = {"x": x, "t": t, "train_ix": train_ix, "test_ix": test_ix}
         return D
 
@@ -158,10 +208,9 @@ def load_data(
         #     [v3 / np.sqrt(np.sum(v3**2)) for _ in range(n_samples)]
         # )
 
-        #! Mauricio: commented the random seed and vectorized the generation code 
+        #! Mauricio: commented the random seed and vectorized the generation code
         V = torch.randn((3, n_samples, n_features))
         V = V / V.norm(p=2, dim=-1, keepdim=True)
-
 
         alpha = 1 / noise_scale
         tt = 0.5 * torch.mul(V[1], news).sum(1) / torch.mul(V[2], news).sum(1)
@@ -179,7 +228,13 @@ def load_data(
         train_ix = idx_list[0:2000]
         test_ix = idx_list[2000:]
 
-        D = {"x": news, "t": treatment, "train_ix": train_ix, "test_ix": test_ix, "V": V}
+        D = {
+            "x": news,
+            "t": treatment,
+            "train_ix": train_ix,
+            "test_ix": test_ix,
+            "V": V,
+        }
 
         return D
 
@@ -204,7 +259,11 @@ def support(dataset: str) -> str:
 
 
 def outcome(
-    D: dict, dataset: str, noise: Tensor | None = None, treatment: Tensor | None = None, noise_scale: float = 0.5
+    D: dict,
+    dataset: str,
+    noise: Tensor | None = None,
+    treatment: Tensor | None = None,
+    noise_scale: float = 0.5,
 ) -> Tensor:
     x = D["x"]
     t = D["t"] if treatment is None else treatment
@@ -217,6 +276,37 @@ def outcome(
             noise = noise_scale * torch.randn_like(t)
         y = mu + noise
         return y, noise
+
+    elif dataset == "sim-B":
+
+        def hermit_polynomial(treatment):
+
+            gamma_0, gamma_1, gamma_2, gamma_3 = np.random.normal(size=4)
+            return (
+                gamma_0
+                + (gamma_1 * treatment)
+                + (gamma_2 * (treatment**2 - 1))
+                + (gamma_3 * (treatment**3 - (3 * treatment)))
+            )
+
+        np.random.seed(5)
+        beta = np.array(
+            [
+                np.random.uniform(low=-1, high=1, size=n_confounders)
+                for _ in range(n_samples)
+            ]
+        )
+
+        beta_x = (beta * x).sum(axis=1)
+        beta_x_norm = beta_x / np.linalg.norm(beta_x, ord=2)
+        # h(a) = gam[0] + gam[1] * a + gam[2] * (a**2 - 1) + gam[3] * (a***3 - 3 * a)
+        hermit = hermit_polynomial(a) + hermit_polynomial(beta_x_norm)
+
+        y = np.random.normal(hermit, 0.5**2)
+
+        #! Dimeji:  I am assuming we don't need any noise in this case, so I set noise to None
+        return y, None
+
     elif dataset == "ihdp-N":  # IHDP modification in VCNet (Niet et al., 2021)
         x1, x2, x3, x4, x5 = [x[:, j] for j in [0, 1, 2, 4, 5]]
         factor1, factor2 = 1.5, 0.5
@@ -310,7 +400,9 @@ def make_dataset(
         raise NotImplementedError
 
     # make counterfactuals and shift-response functions
-    cfs = stack([outcome(D, dataset, treatment=tcf, noise=noise)[0] for tcf in shifted_t], 1)
+    cfs = stack(
+        [outcome(D, dataset, treatment=tcf, noise=noise)[0] for tcf in shifted_t], 1
+    )
 
     if count:
         cfs = (2.0 * cfs / scale).exp().round()
