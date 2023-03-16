@@ -280,7 +280,7 @@ def outcome(
     elif dataset == "sim-B":
 
         def hermit_polynomial(treatment):
-
+            np.random.seed(5)
             gamma_0, gamma_1, gamma_2, gamma_3 = np.random.normal(size=4)
             return (
                 gamma_0
@@ -341,8 +341,6 @@ def outcome(
         y = res + noise
         return y, noise
 
-    elif dataset == "sim-B":  # Simulated data in SCIGAN (Bica et al., 2020)
-        raise NotImplementedError
     elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
     elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
