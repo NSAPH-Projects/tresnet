@@ -142,3 +142,5 @@ dmypy.json
 .pyre/
 .vscode/
 notebooks/test_dataset.ipynb
+dataset/tcga/tcga_semi_synthetic.pkl
+dataset/tcga/tcga.p
