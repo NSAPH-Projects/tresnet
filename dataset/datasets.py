@@ -117,18 +117,13 @@ def load_data(
         x = np.random.multivariate_normal(
             mean=np.zeros((n_confounders,)), cov=tridiagonal_matrix, size=n_samples
         )
+        x = torch.FloatTensor(x)
 
-        np.random.seed(5)
-        beta = np.array(
-            [
-                np.random.uniform(low=-1, high=1, size=n_confounders)
-                for _ in range(n_samples)
-            ]
-        )
-        mu_t = np.sin((beta * x).sum(axis=1))
+        beta = torch.FloatTensor(np.random.uniform(low=-1, high=1, size=n_confounders))
+        mu_t = np.sin(x @ beta)
 
         # t is the treatment
-        t = np.random.normal(mu_t)
+        t = torch.sigmoid(mu_t + 0.3 * torch.randn(n_samples))
 
         ix_list = torch.randperm(n_samples)
         train_ix = ix_list[:800]
@@ -238,8 +233,6 @@ def load_data(
 
         return D
 
-    elif dataset == "sim-B":  # Simulated data in SCIGAN (Bica et al., 2020)
-        raise NotImplementedError
     elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
     elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
@@ -252,7 +245,7 @@ def load_data(
 
 def support(dataset: str) -> str:
     """Returns link and inverse link"""
-    if dataset in ("sim-N", "ihdp-N", "news-N"):  # VCNet datasets (Nie et al., 2021)
+    if dataset in ("sim-N", "ihdp-N", "news-N", "sim-B"):  # VCNet datasets (Nie et al., 2021)
         return "unit"
     else:
         return "real"
@@ -279,33 +272,30 @@ def outcome(
 
     elif dataset == "sim-B":
 
-        def hermit_polynomial(treatment):
-            np.random.seed(5)
-            gamma_0, gamma_1, gamma_2, gamma_3 = np.random.normal(size=4)
+        gams = torch.randn(4)
+        def hermit_polynomial(treatment, gams):
+            # gamma_0, gamma_1, gamma_2, gamma_3 = np.random.normal(size=4)
             return (
-                gamma_0
-                + (gamma_1 * treatment)
-                + (gamma_2 * (treatment**2 - 1))
-                + (gamma_3 * (treatment**3 - (3 * treatment)))
+                gams[0]
+                + (gams[1] * treatment)
+                + (gams[2] * (treatment**2 - 1))
+                + (gams[3] * (treatment**3 - (3 * treatment)))
             )
 
-        np.random.seed(5)
-        beta = np.array(
-            [
-                np.random.uniform(low=-1, high=1, size=n_confounders)
-                for _ in range(n_samples)
-            ]
-        )
+        beta = torch.randn(5)
 
-        beta_x = (beta * x).sum(axis=1)
-        beta_x_norm = beta_x / np.linalg.norm(beta_x, ord=2)
+        # beta_x = x @ beta
+        # beta_x_norm = beta_x / np.linalg.norm(beta_x, ord=2)
         # h(a) = gam[0] + gam[1] * a + gam[2] * (a**2 - 1) + gam[3] * (a***3 - 3 * a)
-        hermit = hermit_polynomial(a) + hermit_polynomial(beta_x_norm)
+        hermit = hermit_polynomial(torch.logit(t), gams) + x @ beta
 
-        y = np.random.normal(hermit, 0.5**2)
+        if noise is None:
+            noise = noise_scale * torch.randn_like(t)
+        y = hermit + noise
 
         #! Dimeji:  I am assuming we don't need any noise in this case, so I set noise to None
-        return y, None
+        #! Mauricio: treated same as others
+        return y, noise
 
     elif dataset == "ihdp-N":  # IHDP modification in VCNet (Niet et al., 2021)
         x1, x2, x3, x4, x5 = [x[:, j] for j in [0, 1, 2, 4, 5]]
@@ -329,7 +319,6 @@ def outcome(
         V = D["V"]
         news = x
 
-        np.random.seed(5)
 
         A = ((torch.mul(V[1], news)).sum(1)) / ((torch.mul(V[2], news)).sum(1))
         res1 = torch.clamp(torch.exp(0.3 * torch.pi * A - 1), min=-2, max=2)
