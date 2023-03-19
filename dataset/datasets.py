@@ -233,10 +233,20 @@ def load_data(
 
         return D
 
+    elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
+        tcga_data = pickle.load(open("./dataset/tcga/tcga_semi_synthetic.pkl", "rb"))
+
+        D = {
+            "x": torch.FloatTensor(tcga_data["x"]),
+            "t": torch.FloatTensor(tcga_data["t"]),
+            "train_ix": torch.FloatTensor(tcga_data["train_idx"]),
+            "test_ix": torch.FloatTensor(tcga_data["test_idx"]),
+            "y": torch.FloatTensor(tcga_data["y"]),
+        }
+
     elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
-    elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
-        raise NotImplementedError
+
     elif dataset == "sim-T":  # Simulated data in E2B (Taha Bahadori et al., 2022)
         raise NotImplementedError
     else:
@@ -330,9 +340,12 @@ def outcome(
         y = res + noise
         return y, noise
 
-    elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
-        raise NotImplementedError
     elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
+        y = D["y"]
+
+        return y
+
+    elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
     elif dataset == "sim-T":  # Simulated data in E2B (Taha Bahadori et al., 2022)
         raise NotImplementedError

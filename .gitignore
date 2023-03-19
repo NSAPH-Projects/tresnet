@@ -1,5 +1,6 @@
 
 # Local ignores for Dimeji
+!dataset/tcga/create_synthetic_TCGA.ipynb
 *.ipynb
 .DS_store
 simu1/
@@ -142,3 +143,5 @@ dmypy.json
 .pyre/
 .vscode/
 notebooks/test_dataset.ipynb
+dataset/tcga/tcga_semi_synthetic.pkl
+dataset/tcga/tcga.p
