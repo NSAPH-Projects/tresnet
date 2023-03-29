@@ -219,7 +219,7 @@ class CausalMLP(nn.Module):
 
         density_estimator_in_dimension = encoder_config[-1][1]
 
-        self.density_head = DiscreteDensityEstimator(
+        self.density_estimator = DiscreteDensityEstimator(
             density_estimator_in_dimension, num_grids,
         )
         self.outcome_head = nn.Sequential(
@@ -233,7 +233,7 @@ class CausalMLP(nn.Module):
 
         # Density estimator
         treatment = (treatment - self.amax) / (self.amin - self.amax)
-        probability_score = self.density_head(treatment, z)
+        probability_score = self.density_estimator(treatment, z)
 
         # Prediction head
         predicted_outcome = self.outcome_head(torch.cat([treatment[:, None], z], axis=1))
@@ -245,5 +245,5 @@ class CausalMLP(nn.Module):
 
     def _initialize_weights(self):
         self.encoder._initialize_weights()
-        self.density_head._initialize_weights()
+        self.density_estimator._initialize_weights()
         # self.outcome_head._initialize_weights()

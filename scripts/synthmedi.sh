@@ -1,22 +1,21 @@
-num_parallel=40
-num_gpus=0
-num_seeds=200
-seed_offset=0 # $num_seeds
-
-# num_parallel=30
+# num_parallel=40
 # num_gpus=0
-# num_seeds=30
+# num_seeds=40
 # seed_offset=0 # $num_seeds
 
-datasets=("ihdp-N" "sim-B" "news-N" "sim-N")
-# datasets=("sim-B")
+num_parallel=10
+num_gpus=0
+num_seeds=30
+seed_offset=0 # $num_seeds
+
+# datasets=("ihdp-N" "sim-B" "news-N" "sim-N")
 # datasets=("ihdp-N" "news-N" "sim-N")
-# datasets=("medisynth")
+datasets=("medisynth")
 
-extra_flags="--silent --eval_every=2000"
-# extra_flags="--silent --eval_every=50"
+# extra_flags="--silent --eval_every=2000"
+extra_flags="--silent --eval_every=50"
 
-printf "\t***** SPLINE + IPW + Plugin + AIPW + TRESNET + DRNET + MLP ****\n"
+printf "\t***** sPLINE + IPW + Plugin + AIPW + TRESNET + DRNET + MLP ****\n"
 # 
 for dset in "${datasets[@]}"
 do

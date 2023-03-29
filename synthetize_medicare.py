@@ -71,7 +71,7 @@ def main(args: argparse.Namespace) -> None:
         test_data[item] = test_data[item].to(dev)
         
     n, input_dim = train_data["covariates"].shape[0], train_data["covariates"].shape[1] 
-
+    args.beta = n ** (-0.25)
     shift_type = args.shift_type
     
     tmin, tmax = data.treatment_norm_min, data.treatment_norm_max
@@ -110,9 +110,10 @@ def main(args: argparse.Namespace) -> None:
         pred_head_config=pred_head_config,
         spline_degree=2,
         spline_knots=[0.33, 0.66],
-        dropout=args.dropout,
+        dropout=0.0
     ).to(dev)
     density_head = model.density_estimator
+    density_head.requires_grad_(False)
 
     model._initialize_weights()
     optim_params = [{"params": model.parameters(), "weight_decay": args.wd}]
@@ -204,9 +205,19 @@ def main(args: argparse.Namespace) -> None:
                     for k, vec in losses.items():
                         print(f"  {k}: {np.mean(vec):.4f}")
 
-            model.train()\
+            model.train()
+        
 
     # load best model
+    model.eval()
+    import pickle
+    # save test covariates and treatment in pkl
+    with open("./dataset/medisynth/medisynth.pkl", "wb") as io:
+        pickle.dump(test_data, io, protocol=pickle.HIGHEST_PROTOCOL)
+
+    # save best model ckpt to same path as above
+    torch.save(model.state_dict(), "./dataset/medisynth/medisynth.pth")
+        
 
 
 if __name__ == "__main__":
@@ -220,22 +231,22 @@ if __name__ == "__main__":
     parser.add_argument("--eval_every", default=10, type=int)
     parser.add_argument("--rdir", default="results", type=str)
     parser.add_argument("--edir", default=None, type=str)
-    parser.add_argument("--opt", default="sgd", type=str, choices=("adam", "sgd"))
+    parser.add_argument("--opt", default="adam", type=str, choices=("adam", "sgd"))
     parser.add_argument("--val", default="test", type=str, choices=("is", "test", None))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
     parser.add_argument("--n_epochs", default=20, type=int)
     parser.add_argument("--batch_size", default=4000, type=int)
-    parser.add_argument("--wd", default=5e-3, type=float)
+    parser.add_argument("--wd", default=1e-4, type=float)
     parser.add_argument("--lr", default=1e-4, type=float) 
     parser.add_argument("--ls", default=0.1, type=float) 
     # parser.add_argument("--eps_lr", default=0.001, type=float) p
-    parser.add_argument("--beta", default=0.1, type=float)
+    # parser.add_argument("--beta", default=0.10, type=float)
     # parser.add_argument("--noise", default=0.5, type=float)
     parser.add_argument("--train_prop", default=0.8, type=float)
     parser.add_argument("--silent", default=False, action="store_true")
     parser.add_argument("--ratio_norm", default=True, action="store_true")
-    parser.add_argument("--dropout", default=0.05, type=float)
+    parser.add_argument("--dropout", default=0.0, type=float)
     parser.add_argument("--mc_dropout", default=False, action="store_true")
 
     # regularizations availables
