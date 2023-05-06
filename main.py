@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 
 import matplotlib
-matplotlib.use('agg')  # needed in the cluster
+
+matplotlib.use("agg")  # needed in the cluster
 
 from tresnet.models import Drnet, VCNet, RatioNet, CausalMLP
 from tresnet import ratios
@@ -43,12 +44,19 @@ def main(args: argparse.Namespace) -> None:
     delta_list = np.linspace(0.5 / steps, 0.5, num=steps, dtype=np.float32).tolist()
 
     # make dataset from available optionss
-    D = make_dataset(args.dataset, delta_list, n_train=args.n_train, n_test=args.n_test, noise_scale=args.noise, count=args.count)
+    D = make_dataset(
+        args.dataset,
+        delta_list,
+        n_train=args.n_train,
+        n_test=args.n_test,
+        noise_scale=args.noise,
+        count=args.count,
+    )
     train_matrix = D["train_matrix"].to(dev)
     test_matrix = D["train_matrix"].to(dev)
     shift_type = D["shift_type"]
     n, input_dim = train_matrix.shape[0], train_matrix.shape[1] - 2
-    args.beta = 5* n ** (-0.5)
+    args.beta = 5 * n ** (-0.5)
 
     # make neural network model
     density_estimator_config = [(input_dim, 50, 1), (50, 50, 1)]
@@ -86,7 +94,9 @@ def main(args: argparse.Namespace) -> None:
             spline_degree_Q=2,
             spline_knots_Q=[0.33, 0.66],
             spline_degree_W=2,
-            spline_knots_W=np.linspace(min(delta_list), max(delta_list), num=len(delta_list)//2)[1:-1].tolist(),
+            spline_knots_W=np.linspace(
+                min(delta_list), max(delta_list), num=len(delta_list) // 2
+            )[1:-1].tolist(),
             dropout=args.dropout,
         ).to(dev)
         ratio_head = model.ratio_estimator
@@ -94,9 +104,9 @@ def main(args: argparse.Namespace) -> None:
             ratio_head.requires_grad_(False)
         if args.ratio_only:
             model.prediction_head.requires_grad_(False)
-    
+
     elif args.backbone == "drnet":
-        cfg = [(50, 50, 1, 'relu'), (50, 1, 1, 'id')]
+        cfg = [(50, 50, 1, "relu"), (50, 1, 1, "id")]
         model = Drnet(
             density_estimator_config,
             isenhance=1,  # isenhance=0 is tarnet accorindg to vcnet repo
@@ -109,7 +119,7 @@ def main(args: argparse.Namespace) -> None:
         # args.outcome_only = True
         density_head = model.density_estimator
         if args.outcome_only:
-            density_head.requires_grad_(False)       
+            density_head.requires_grad_(False)
     elif args.backbone == "mlp":
         model = CausalMLP(
             density_estimator_config,
@@ -117,16 +127,14 @@ def main(args: argparse.Namespace) -> None:
             pred_head_config=pred_head_config,
             dropout=args.dropout,
             amin=amin,
-            amax=amax
+            amax=amax,
         ).to(dev)
         density_head = model.density_estimator
         outcome_head = model.outcome_head
         if args.outcome_only:
             density_head.requires_grad_(False)
         if args.ratio_only:
-            outcome_head.requires_grad_(False) 
-
-
+            outcome_head.requires_grad_(False)
 
     model._initialize_weights()
     optim_params = [{"params": model.parameters(), "weight_decay": args.wd}]
@@ -175,9 +183,7 @@ def main(args: argparse.Namespace) -> None:
             dmax=max(delta_list),
         ).to(dev)
         tr_params = targeted_regularizer.parameters()
-        optim_params.append(
-            {"params": tr_params, "momentum": 0.0, "weight_decay": 0.0}
-        )
+        optim_params.append({"params": tr_params, "momentum": 0.0, "weight_decay": 0.0})
 
     # make optimizer
     if args.opt == "adam":
@@ -189,7 +195,11 @@ def main(args: argparse.Namespace) -> None:
 
     best_loss, best_model, best_iter = 1e6, deepcopy(model), 0
     # if args.tr_reg:
-    best_tr = deepcopy(targeted_regularizer) if args.tr == "vc" else targeted_regularizer.clone()
+    best_tr = (
+        deepcopy(targeted_regularizer)
+        if args.tr == "vc"
+        else targeted_regularizer.clone()
+    )
     best_model.eval()
 
     # training loop
@@ -235,8 +245,12 @@ def main(args: argparse.Namespace) -> None:
                 gps_ratio_losses = []
                 for j, d in enumerate(delta_list):
                     t_d = ratios.shift(t, d, shift_type)
-                    logits = torch.cat([model.log_ratio(t_d, z, j), model.log_ratio(t, z, j)])
-                    tgts = torch.cat([torch.ones_like(t), torch.zeros_like(t)]).clamp(args.ls, 1 - args.ls)
+                    logits = torch.cat(
+                        [model.log_ratio(t_d, z, j), model.log_ratio(t, z, j)]
+                    )
+                    tgts = torch.cat([torch.ones_like(t), torch.zeros_like(t)]).clamp(
+                        args.ls, 1 - args.ls
+                    )
                     L = F.binary_cross_entropy_with_logits(logits, tgts)
                     gps_ratio_losses.append(L)
                 gps_ratio_loss = sum(gps_ratio_losses) / len(delta_list)
@@ -265,7 +279,7 @@ def main(args: argparse.Namespace) -> None:
                 if args.ratio != "c_ratio":
                     log_ratio = ratios.log_density_ratio_under_shift(
                         t=t,
-                        delta=torch.full_like(t,d),
+                        delta=torch.full_like(t, d),
                         density_estimator=density_head,
                         z=z,
                         shift_type=shift_type,
@@ -278,7 +292,7 @@ def main(args: argparse.Namespace) -> None:
                     eps = targeted_regularizer(torch.full_like(t, d))
                 ratio = log_ratio.clamp(-10, 10).exp()
                 ratio_ = ratio.detach() if args.detach_ratio else ratio
-                if args.ratio_norm: #! alert
+                if args.ratio_norm:  #! alert
                     ratio_ = ratio_ / ratio_.mean()
                 if args.pert == "simple":
                     y_pert = y_hat + eps
@@ -288,9 +302,16 @@ def main(args: argparse.Namespace) -> None:
                             bias = (ratio_ * (y - y_hat)).mean() / ratio_.mean()
                     else:
                         y_pert = y_pert.clamp(-10, 10)
-                        L = (ratio_ * F.poisson_nll_loss(y_pert, y, log_input=True, reduction='none')).mean()
+                        L = (
+                            ratio_
+                            * F.poisson_nll_loss(
+                                y_pert, y, log_input=True, reduction="none"
+                            )
+                        ).mean()
                         with torch.no_grad():
-                            bias = (ratio_ * y + 1e-8).mean().log() - (ratio_ * y_hat.exp() + 1e-8).mean().log()
+                            bias = (ratio_ * y + 1e-8).mean().log() - (
+                                ratio_ * y_hat.exp() + 1e-8
+                            ).mean().log()
                             # bias = bias.clamp(-0.05, 0.05)
                 elif args.pert == "original":
                     y_pert = y_hat + ratio_ * eps
@@ -299,8 +320,12 @@ def main(args: argparse.Namespace) -> None:
                         with torch.no_grad():
                             bias = (ratio_ * (y - y_hat)).mean() / ratio_.pow(2).mean()
                     else:
-                        raise NotImplementedError("poisson can  only be done with simple pert")
-                if args.tr == "discrete" and args.pert == "simple": # manual update of epsilon
+                        raise NotImplementedError(
+                            "poisson can  only be done with simple pert"
+                        )
+                if (
+                    args.tr == "discrete" and args.pert == "simple"
+                ):  # manual update of epsilon
                     biases[j] = bias
                     # eps.add_((bias - eps).item(), alpha=args.eps_lr)
                 tr_losses.append(L)
@@ -308,7 +333,6 @@ def main(args: argparse.Namespace) -> None:
             if args.tr_reg:
                 total_loss = total_loss + args.beta * tr_losses
             losses["tr_loss"].append(tr_losses.item())
-
 
             # ix = torch.randint(0, len(delta_list), size=(t.shape[0],), device=dev)
             # random_delta = torch.FloatTensor(delta_list).to(dev)[ix]
@@ -333,7 +357,7 @@ def main(args: argparse.Namespace) -> None:
             #     if args.ratio_norm:
             #         ratio_ = ratio_ / ratio_.mean()
             #     tr_loss = (ratio_ * (y_pert - y).pow(2)).mean()
-            # 
+            #
             # losses["tr_loss"].append(tr_loss.item())
             # if args.tr_reg:
             #     total_loss = total_loss + args.beta * tr_loss
@@ -357,7 +381,7 @@ def main(args: argparse.Namespace) -> None:
             torch.nn.utils.clip_grad_value_(model.parameters(), 10.0)
             optimizer.step()
 
-            if args.tr == 'discrete':
+            if args.tr == "discrete":
                 targeted_regularizer += eps_lr * (biases - targeted_regularizer)
             # update epsilon (coordinate ascent)
 
@@ -399,23 +423,31 @@ def main(args: argparse.Namespace) -> None:
                             if args.pert == "original":
                                 y_pert = y_hat + eps * ratio
                             elif args.pert == "simple":
-                                y_pert= y_hat + eps
+                                y_pert = y_hat + eps
                         else:
                             y_pert = y_hat
                         if args.poisson:
                             y_hat = y_hat.clamp(-10, 10)
                             y_pert = y_pert.clamp(-10, 10)
-                            L = (ratio * F.poisson_nll_loss(y_pert, y, reduction='none')).mean()
+                            L = (
+                                ratio * F.poisson_nll_loss(y_pert, y, reduction="none")
+                            ).mean()
                             val_losses.append(L.item())
                         else:
-                            val_losses.append((ratio * (y_pert - y).pow(2)).mean().item())
+                            val_losses.append(
+                                (ratio * (y_pert - y).pow(2)).mean().item()
+                            )
                     val_loss = float(np.mean(val_losses))
                     if val_loss < best_loss:
                         best_model = deepcopy(model)
                         best_model.eval()
                         best_loss = val_loss
                         best_iter = epoch
-                        best_tr = deepcopy(targeted_regularizer) if args.tr == "vc" else targeted_regularizer.clone()
+                        best_tr = (
+                            deepcopy(targeted_regularizer)
+                            if args.tr == "vc"
+                            else targeted_regularizer.clone()
+                        )
 
                 elif args.val == "none":
                     best_model = deepcopy(model)
@@ -497,29 +529,30 @@ def main(args: argparse.Namespace) -> None:
                             y_pert_delta = torch.exp(y_pert_delta)
                             y_delta = torch.exp(y_delta)
                         estim = (ratio * (y - y_pert)).mean() + y_pert_delta.mean()
-                        error = (estim - truth)
+                        error = estim - truth
                         aipw_estims.append(estim.item())
                         aipw_errors.append(error.item())
 
                         # Targeted Regularization
                         estim = y_pert_delta.mean()
-                        error = (estim - truth)
+                        error = estim - truth
                         tr_estims.append(estim.item())
                         tr_errors.append(error.item())
 
                         # Plugin
                         estim = y_delta.mean()
-                        error = (estim - truth)
+                        error = estim - truth
                         plugin_estims.append(estim.item())
                         plugin_errors.append(error.item())
 
                         # erf_estim, find the value of each shifted treatment in the erf table
-                        t_grid_idx = (t_delta[:, None] < t_grid[None]).long().argmax(dim=1)
+                        t_grid_idx = (
+                            (t_delta[:, None] < t_grid[None]).long().argmax(dim=1)
+                        )
                         erf_estim = erf[t_grid_idx].mean()
-                        error = (erf_estim - truth)
+                        error = erf_estim - truth
                         erf_estims.append(erf_estim.item())
                         erf_errors.append(error.item())
-
 
                     # add estimation error as columns of result dataframe
                     df[part + "_ipw_estim"] = ipw_estims
@@ -546,13 +579,13 @@ def main(args: argparse.Namespace) -> None:
                     metrics["aipw_curve_rmse"] = float(
                         np.square(aipw_errors).mean() ** 0.5
                     )
-                    metrics["tr_curve_rmse"] = float(
-                        np.square(tr_errors).mean() ** 0.5
-                    )
+                    metrics["tr_curve_rmse"] = float(np.square(tr_errors).mean() ** 0.5)
                     metrics["plugin_curve_rmse"] = float(
                         np.square(plugin_errors).mean() ** 0.5
                     )
-                    metrics["erf_curve_rmse"] = float(np.square(erf_errors).mean() ** 0.5)
+                    metrics["erf_curve_rmse"] = float(
+                        np.square(erf_errors).mean() ** 0.5
+                    )
                     metrics["ipw_bias"] = float(np.mean(ipw_errors))
                     metrics["aipw_curve_bias"] = float(np.mean(aipw_errors))
                     metrics["tr_curve_bias"] = float(np.mean(aipw_errors))
@@ -573,7 +606,6 @@ def main(args: argparse.Namespace) -> None:
                         print(f"  aipw curve: {metrics['aipw_curve_rmse']:.4f}")
                         print(f"  tr curve: {metrics['tr_curve_rmse']:.4f}")
 
-
                 # save estimated curve dataset
                 results_path = f"{args.rdir}/{args.dataset}/{edir}/curve.csv"
                 df.round(4).to_csv(results_path, index=False)
@@ -589,12 +621,18 @@ def main(args: argparse.Namespace) -> None:
                     df.delta, df.train_truth, label="truth (train)", c="black", ls="--"
                 )
                 ax[0].plot(
-                    df.delta, df.train_tr_estim, label="tresnet", 
+                    df.delta,
+                    df.train_tr_estim,
+                    label="tresnet",
                 )
                 ax[0].plot(
-                    df.delta, df.train_aipw_estim, label="aipw",
+                    df.delta,
+                    df.train_aipw_estim,
+                    label="aipw",
                 )
-                ax[1].plot(df.delta, df.test_truth, label="truth (test)", c="black", ls="--")
+                ax[1].plot(
+                    df.delta, df.test_truth, label="truth (test)", c="black", ls="--"
+                )
                 ax[1].plot(df.delta, df.test_tr_estim, label="tresnet")
                 ax[1].plot(df.delta, df.test_aipw_estim, label="aipw")
                 fig_path = f"{args.rdir}/{args.dataset}/{edir}/fig.png"
@@ -617,15 +655,17 @@ if __name__ == "__main__":
     parser.add_argument("--rdir", default="results", type=str)
     parser.add_argument("--edir", default=None, type=str)
     parser.add_argument("--opt", default="sgd", type=str, choices=("adam", "sgd"))
-    parser.add_argument("--val", default="none", type=str, choices=("is", "val", "none"))
+    parser.add_argument(
+        "--val", default="none", type=str, choices=("is", "val", "none")
+    )
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
     parser.add_argument("--n_epochs", default=2000, type=int)
     parser.add_argument("--batch_size", default=4000, type=int)
     parser.add_argument("--eval_every", default=100, type=int)
     parser.add_argument("--wd", default=1e-3, type=float)
-    parser.add_argument("--lr", default=1e-4, type=float) 
-    parser.add_argument("--ls", default=0.1, type=float) 
+    parser.add_argument("--lr", default=1e-4, type=float)
+    parser.add_argument("--ls", default=0.1, type=float)
 
     parser.add_argument("--beta", default=0.1, type=float)
     parser.add_argument("--noise", default=0.1, type=float)  # it is 0.5 in vcnet paper
@@ -634,7 +674,9 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", default=0.2, type=float)
 
     # regularizations availables
-    parser.add_argument("--ratio", default="erm", type=str, choices=("erm", "gps_ratio", "c_ratio"))
+    parser.add_argument(
+        "--ratio", default="erm", type=str, choices=("erm", "gps_ratio", "c_ratio")
+    )
     parser.add_argument("--var_reg", default=False, action="store_true")
     parser.add_argument("--outcome_only", default=False, action="store_true")
     parser.add_argument("--ratio_only", default=False, action="store_true")
@@ -645,7 +687,9 @@ if __name__ == "__main__":
     parser.add_argument("--tr_reg", default=False, action="store_true")
     parser.add_argument("--poisson", default=False, action="store_true")
     parser.add_argument("--count", default=False, action="store_true")
-    parser.add_argument("--backbone", default="vcnet", choices=("vcnet", "drnet", "mlp"))
+    parser.add_argument(
+        "--backbone", default="vcnet", choices=("vcnet", "drnet", "mlp")
+    )
     parser.add_argument("--target", type=str, default="si", choices=("si", "erf"))
     parser.add_argument("--tr", default="discrete", choices=("discrete", "vc"))
     parser.add_argument("--fit_ratio_scale", default=False, action="store_true")
@@ -653,5 +697,3 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args)
-
-
