@@ -214,7 +214,7 @@ def main(args: argparse.Namespace) -> None:
         # iterate each batch
         # for _, item in enumerate(train_loader):
         for _, (t, x, y) in enumerate(train_loader):
-            total_loss = torch.tensor(0.0, device=dev)
+            total_loss = torch.tensor(0.0, device=dev, dtype=torch.float32)
 
             # move tensor to gpu if available
             # t = item["treatment"].to(dev)
@@ -223,6 +223,15 @@ def main(args: argparse.Namespace) -> None:
 
             # zero grad and evaluate model
             optimizer.zero_grad()
+
+            #print(t.dtype)
+            #print(x.dtype)
+            #print(y.dtype)
+            #raise
+            #t = t.float()
+            #x = x.float()
+            #y = y.float()
+
             model_output = model(t, x)
             z = model_output["z"]
 
@@ -378,6 +387,7 @@ def main(args: argparse.Namespace) -> None:
             losses["total_loss"].append(total_loss.item())
 
             total_loss.backward()
+        
             torch.nn.utils.clip_grad_value_(model.parameters(), 10.0)
             optimizer.step()
 

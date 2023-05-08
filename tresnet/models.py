@@ -229,6 +229,9 @@ class CausalMLP(nn.Module):
         )
 
     def forward(self, treatment, confounders):
+
+        #treatment = treatment.float()
+        #confounders = confounders.float()
         z = self.encoder(confounders)
 
         # Density estimator
