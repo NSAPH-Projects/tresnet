@@ -3,6 +3,7 @@ import os
 
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import StandardScaler
 
 #import pickle
 
@@ -61,7 +62,6 @@ def get_iter(data_matrix, batch_size, **kwargs):
     dataset = TensorDataset(treatment, covariates, outcome)
     iterator = DataLoader(dataset, batch_size=batch_size, **kwargs)
     return iterator
-
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -314,7 +314,7 @@ def load_data(
         V = np.random.normal(loc=0.0, scale=1.0, size=(num_weights, patients.shape[1]))
 
         for col in range(V.shape[1]):
-            V[:, col] = V[:, col] / np.linalg.norm(V[:, col], ord=1)
+            V[:, col] = V[:, col] / np.linalg.norm(V[:, col], ord=2)
 
         dosages = generate_dosage_treatment_1(patients, V)  # generate dosages
 
@@ -322,8 +322,13 @@ def load_data(
         idx_list = torch.randperm(patients.shape[0])
         train_ix = idx_list[0 : int(len(idx_list) * 0.8)]
         test_ix = idx_list[int(len(idx_list) * 0.8) :]
+
+        # remove features from x that are constant
+        x = torch.tensor(patients, dtype=torch.float32)
+        # x = x[:, x.std(0) > 0]
+
         D = {
-            "x": torch.tensor(patients, dtype=torch.float32),
+            "x": x,
             "t": torch.tensor(dosages, dtype=torch.float32),
             "train_ix": train_ix,
             "test_ix": test_ix,
@@ -397,11 +402,15 @@ def support(dataset: str) -> str:
         "news-N",
         "sim-B",
         "medisynth",
+        "tcga-B"
     ):  # VCNet datasets (Nie et al., 2021)
         return "unit"
     else:
         return "real"
 
+def needs_standardize(dataset: str) -> bool:
+    """Returns link and inverse link"""
+    return True
 
 def outcome(
     D: dict,
@@ -484,15 +493,15 @@ def outcome(
         return y, noise
 
     elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
-        V = D["V"]
-        x = x.numpy()
-        t = t.numpy()
+        V = torch.FloatTensor(D["V"])
+ 
+        C = 10
+        y = C * ((x @ V[0]) + 12.0 * (x @ V[1]) *  t - 12.0 * (x @ V[2]) *  (t ** 2))
 
-        y = 10 * (np.dot(V[0], x.T) + (np.dot((12.0 * V[1]), x.T) *  t) - (np.dot((12.0 * V[1]), x.T) *  (t ** 2)))
-
-        noise = np.random.normal(0, 0.2, size = len(y))
+        if noise is None:
+            noise = noise_scale * torch.randn_like(t)
         y = y + noise
-        return torch.tensor(y, dtype=torch.float32), torch.tensor(noise, dtype=torch.float32)
+        return y, noise
 
     elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
@@ -534,6 +543,7 @@ def make_dataset(
     delta_list: Tensor,
     noise_scale: float = 0.5,
     count: bool = False,
+    standardize: bool = True,
     **kwargs,
 ) -> Dict:
     """
@@ -601,6 +611,25 @@ def make_dataset(
     )
     erf_train = cfs_erf[train_ix, :].mean(0)
     erf_test = cfs_erf[test_ix, :].mean(0)
+
+    if standardize and needs_standardize(dataset):
+        x_means = train_matrix[:, 1:-1].mean(0, keepdim=True)
+        x_stds = train_matrix[:, 1:-1].std(0, keepdim=True)
+        x_stds[x_stds == 0] = 1.0
+        train_matrix[:, 1:-1] = (train_matrix[:, 1:-1] - x_means) / x_stds
+        test_matrix[:, 1:-1] = (test_matrix[:, 1:-1] - x_means) / x_stds
+        y_mean = train_matrix[:, -1].mean()
+        y_std = train_matrix[:, -1].std()
+        train_matrix[:, -1] = (train_matrix[:, -1] - y_mean) / y_std
+        test_matrix[:, -1] = (test_matrix[:, -1] - y_mean) / y_std
+        srf_train = (srf_train - y_mean) / y_std
+        srf_test = (srf_test - y_mean) / y_std
+        erf_train = (erf_train - y_mean) / y_std
+        erf_test = (erf_test - y_mean) / y_std
+        # t_min = train_matrix[:, 0].min()
+        # t_max = train_matrix[:, 0].max()
+        # train_matrix[:, 0] = (train_matrix[:, 0] - t_min) / (t_max - t_min)
+        # test_matrix[:, 0] = (test_matrix[:, 0] - t_min) / (t_max - t_min)
 
     return {
         "train_matrix": train_matrix,
