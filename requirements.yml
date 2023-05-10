@@ -1,0 +1,19 @@
+name: tresnet
+channels:
+  - conda-forge
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.11.3
+  - pytorch::pytorch=2.0.1
+  - torchaudio=2.0.2
+  - torchvision=0.15.2
+  - numpy=1.24.3
+  - pandas=2.0.1
+  - jupyter=1.0.0
+  - notebook=6.5.4
+  - pip=23.1.2
+  - matplotlib=3.7.1
+  - seaborn=0.12.2
+  - yaml=0.2.5
+  - tqdm=4.65.0
