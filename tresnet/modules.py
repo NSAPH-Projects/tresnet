@@ -38,7 +38,6 @@ class Encoder(nn.Module):
         Returns:
             torch.Tensor : Z
         """
-
         return self.encoder(covariates)
 
     def _initialize_weights(self):
@@ -67,7 +66,7 @@ class DiscreteDensityEstimator(nn.Module):
 
         #! Mauricio Bias is not required when using softmax
         self.fc = nn.Linear(
-            in_features=in_dimension, out_features=out_dimension, bias=False # bias
+            in_features=in_dimension, out_features=out_dimension, bias=False  # bias
         )
         self.softmax = nn.Softmax(dim=1)
 
@@ -124,7 +123,12 @@ class VCDiscreteEstimator(nn.Module):
 
         #! Mauricio Bias is not required when using softmax
         self.fc = DynamicLinearLayer(
-            in_dimension, out_dimension, 1, spline_degree, spline_knots, is_last_layer=True,
+            in_dimension,
+            out_dimension,
+            1,
+            spline_degree,
+            spline_knots,
+            is_last_layer=True,
         )
 
     def forward(self, d, z):
@@ -153,7 +157,7 @@ class VCDiscreteEstimator(nn.Module):
         upper_bounds = out[ix, upper_grid_idx]  # Get values at the upper grid index
 
         prob_score = lower_bounds + (upper_bounds - lower_bounds) * distance_to_lower
-        if torch.any(~ in_support):
+        if torch.any(~in_support):
             raise Exception("")
         return prob_score * in_support.float()
 
@@ -183,7 +187,7 @@ class DiscreteDensityEstimator(nn.Module):
 
         #! Mauricio Bias is not required when using softmax
         self.fc = nn.Linear(
-            in_features=in_dimension, out_features=out_dimension, bias=False # bias
+            in_features=in_dimension, out_features=out_dimension, bias=False  # bias
         )
         self.softmax = nn.Softmax(dim=1)
 
@@ -262,13 +266,12 @@ class DynamicLinearLayer(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
-
         features = x[:, 1:]
         treatment = x[:, 0]
 
         #! Mauricio: the following gives a warning, so I commented and used einsum
         # hidden = torch.matmul(self.weight.T, features.T).T
-        hidden = torch.einsum('ab,bcd->acd', features, self.weight)
+        hidden = torch.einsum("ab,bcd->acd", features, self.weight)
 
         treatment_basis = self.spline_basis(treatment)  # bs, d
         treatment_basis_unsqueezed = torch.unsqueeze(treatment_basis, 1)
@@ -289,7 +292,6 @@ class DynamicLinearLayer(nn.Module):
 
 class VCPredictionHead(nn.Module):
     def __init__(self, config, spline_degree, spline_knots):
-
         """This module generates a varying coefficient prediction head by stacking
         multiple DynamicLinearLayer objects
         """
@@ -318,7 +320,6 @@ class VCPredictionHead(nn.Module):
         self.prediction_head = nn.Sequential(*blocks)
 
     def forward(self, treatment, z):
-
         treatment_hidden = torch.cat((torch.unsqueeze(treatment, 1), z), 1)
         return self.prediction_head(treatment_hidden)
 
@@ -332,7 +333,6 @@ class VCPredictionHead(nn.Module):
 
 class TruncatedPowerBasis:
     def __init__(self, degree, knots):
-
         """
         This class construct the truncated power basis; the data is assumed in [0,1]
 
@@ -357,7 +357,6 @@ class TruncatedPowerBasis:
             raise ValueError("Values 0 or 1 cannot be in knots")
 
     def __call__(self, x):
-
         """
 
         Args:
@@ -413,7 +412,6 @@ class TargetedRegularizerCoeff(nn.Module):
 
 
 def get_linear_interpolation_params(treatment, num_grid, a=0, b=1):
-
     """
 
     Returns:
@@ -442,7 +440,7 @@ def get_linear_interpolation_params(treatment, num_grid, a=0, b=1):
 
 
 class Treat_Linear(nn.Module):
-    def __init__(self, ind, outd, act='relu', istreat=1, isbias=1, islastlayer=0):
+    def __init__(self, ind, outd, act="relu", istreat=1, isbias=1, islastlayer=0):
         super(Treat_Linear, self).__init__()
         # ind does NOT include the extra concat treatment
         self.ind = ind
@@ -459,15 +457,17 @@ class Treat_Linear(nn.Module):
             self.bias = None
 
         if self.istreat:
-            self.treat_weight = nn.Parameter(torch.rand(1, self.outd), requires_grad=True)
+            self.treat_weight = nn.Parameter(
+                torch.rand(1, self.outd), requires_grad=True
+            )
         else:
             self.treat_weight = None
 
-        if act == 'relu':
+        if act == "relu":
             self.act = nn.ReLU(inplace=True)
-        elif act == 'tanh':
+        elif act == "tanh":
             self.act = nn.Tanh()
-        elif act == 'sigmoid':
+        elif act == "sigmoid":
             self.act = nn.Sigmoid()
         else:
             self.act = None
@@ -492,37 +492,52 @@ class Treat_Linear(nn.Module):
 
         return out
 
+
 class Multi_head(nn.Module):
     def __init__(self, cfg, isenhance):
         super(Multi_head, self).__init__()
 
-        self.cfg = cfg # cfg does NOT include the extra dimension of concat treatment
+        self.cfg = cfg  # cfg does NOT include the extra dimension of concat treatment
         self.isenhance = isenhance  # set 1 to concat treatment every layer/ 0: only concat on first layer
 
         # we default set num of heads = 5
-        self.pt = [0.0, 0.2, 0.4, 0.6, 0.8, 1.]
+        self.pt = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
 
         self.outdim = -1
         # construct the predicting networks
         blocks = []
         for layer_idx, layer_cfg in enumerate(cfg):
             if len(layer_cfg) == 3:
-                layer_cfg = (layer_cfg[0], layer_cfg[1], 'relu', layer_cfg[2])
+                layer_cfg = (layer_cfg[0], layer_cfg[1], "relu", layer_cfg[2])
             if layer_idx == len(cfg) - 1:  # last layer
                 self.outdim = layer_cfg[1]
                 if layer_idx == 0 or self.isenhance:
                     istreat = 1
                 else:
                     istreat = 0
-                last_layer = Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
-                                          islastlayer=1)
+                last_layer = Treat_Linear(
+                    layer_cfg[0],
+                    layer_cfg[1],
+                    act=layer_cfg[3],
+                    istreat=istreat,
+                    isbias=layer_cfg[2],
+                    islastlayer=1,
+                )
             else:
                 if layer_idx == 0 or self.isenhance:
                     istreat = 1
                 else:
                     istreat = 0
-                blocks.append(Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
-                                           islastlayer=0))
+                blocks.append(
+                    Treat_Linear(
+                        layer_cfg[0],
+                        layer_cfg[1],
+                        act=layer_cfg[3],
+                        istreat=istreat,
+                        isbias=layer_cfg[2],
+                        islastlayer=0,
+                    )
+                )
         blocks.append(last_layer)
         self.Q1 = nn.Sequential(*blocks)
 
@@ -530,22 +545,34 @@ class Multi_head(nn.Module):
         for layer_idx, layer_cfg in enumerate(cfg):
             if layer_idx == len(cfg) - 1:  # last layer
                 if len(layer_cfg) == 3:
-                    layer_cfg = (layer_cfg[0], layer_cfg[1], 'relu', layer_cfg[2])
+                    layer_cfg = (layer_cfg[0], layer_cfg[1], "relu", layer_cfg[2])
                 if layer_idx == 0 or self.isenhance:
                     istreat = 1
                 else:
                     istreat = 0
-                last_layer = Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat,
-                                          isbias=layer_cfg[2],
-                                          islastlayer=1)
+                last_layer = Treat_Linear(
+                    layer_cfg[0],
+                    layer_cfg[1],
+                    act=layer_cfg[3],
+                    istreat=istreat,
+                    isbias=layer_cfg[2],
+                    islastlayer=1,
+                )
             else:
                 if layer_idx == 0 or self.isenhance:
                     istreat = 1
                 else:
                     istreat = 0
                 blocks.append(
-                    Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
-                                 islastlayer=0))
+                    Treat_Linear(
+                        layer_cfg[0],
+                        layer_cfg[1],
+                        act=layer_cfg[3],
+                        istreat=istreat,
+                        isbias=layer_cfg[2],
+                        islastlayer=0,
+                    )
+                )
         blocks.append(last_layer)
         self.Q2 = nn.Sequential(*blocks)
 
@@ -556,17 +583,29 @@ class Multi_head(nn.Module):
                     istreat = 1
                 else:
                     istreat = 0
-                last_layer = Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat,
-                                          isbias=layer_cfg[2],
-                                          islastlayer=1)
+                last_layer = Treat_Linear(
+                    layer_cfg[0],
+                    layer_cfg[1],
+                    act=layer_cfg[3],
+                    istreat=istreat,
+                    isbias=layer_cfg[2],
+                    islastlayer=1,
+                )
             else:
                 if layer_idx == 0 or self.isenhance:
                     istreat = 1
                 else:
                     istreat = 0
                 blocks.append(
-                    Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
-                                 islastlayer=0))
+                    Treat_Linear(
+                        layer_cfg[0],
+                        layer_cfg[1],
+                        act=layer_cfg[3],
+                        istreat=istreat,
+                        isbias=layer_cfg[2],
+                        islastlayer=0,
+                    )
+                )
         blocks.append(last_layer)
         self.Q3 = nn.Sequential(*blocks)
 
@@ -577,17 +616,29 @@ class Multi_head(nn.Module):
                     istreat = 1
                 else:
                     istreat = 0
-                last_layer = Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat,
-                                          isbias=layer_cfg[2],
-                                          islastlayer=1)
+                last_layer = Treat_Linear(
+                    layer_cfg[0],
+                    layer_cfg[1],
+                    act=layer_cfg[3],
+                    istreat=istreat,
+                    isbias=layer_cfg[2],
+                    islastlayer=1,
+                )
             else:
                 if layer_idx == 0 or self.isenhance:
                     istreat = 1
                 else:
                     istreat = 0
                 blocks.append(
-                    Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
-                                 islastlayer=0))
+                    Treat_Linear(
+                        layer_cfg[0],
+                        layer_cfg[1],
+                        act=layer_cfg[3],
+                        istreat=istreat,
+                        isbias=layer_cfg[2],
+                        islastlayer=0,
+                    )
+                )
         blocks.append(last_layer)
         self.Q4 = nn.Sequential(*blocks)
 
@@ -598,17 +649,29 @@ class Multi_head(nn.Module):
                     istreat = 1
                 else:
                     istreat = 0
-                last_layer = Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat,
-                                          isbias=layer_cfg[2],
-                                          islastlayer=1)
+                last_layer = Treat_Linear(
+                    layer_cfg[0],
+                    layer_cfg[1],
+                    act=layer_cfg[3],
+                    istreat=istreat,
+                    isbias=layer_cfg[2],
+                    islastlayer=1,
+                )
             else:
                 if layer_idx == 0 or self.isenhance:
                     istreat = 1
                 else:
                     istreat = 0
                 blocks.append(
-                    Treat_Linear(layer_cfg[0], layer_cfg[1], act=layer_cfg[3], istreat=istreat, isbias=layer_cfg[2],
-                                 islastlayer=0))
+                    Treat_Linear(
+                        layer_cfg[0],
+                        layer_cfg[1],
+                        act=layer_cfg[3],
+                        istreat=istreat,
+                        isbias=layer_cfg[2],
+                        islastlayer=0,
+                    )
+                )
         blocks.append(last_layer)
         self.Q5 = nn.Sequential(*blocks)
 
@@ -617,11 +680,26 @@ class Multi_head(nn.Module):
         out = torch.zeros(x.shape[0], self.outdim).to(x.device)
         t = x[:, 0]
 
-        idx1 = list(set(list(torch.where(t >= self.pt[0])[0].numpy())) & set(torch.where(t < self.pt[1])[0].numpy()))
-        idx2 = list(set(list(torch.where(t >= self.pt[1])[0].numpy())) & set(torch.where(t < self.pt[2])[0].numpy()))
-        idx3 = list(set(list(torch.where(t >= self.pt[2])[0].numpy())) & set(torch.where(t < self.pt[3])[0].numpy()))
-        idx4 = list(set(list(torch.where(t >= self.pt[3])[0].numpy())) & set(torch.where(t < self.pt[4])[0].numpy()))
-        idx5 = list(set(list(torch.where(t >= self.pt[4])[0].numpy())) & set(torch.where(t <= self.pt[5])[0].numpy()))
+        idx1 = list(
+            set(list(torch.where(t >= self.pt[0])[0].numpy()))
+            & set(torch.where(t < self.pt[1])[0].numpy())
+        )
+        idx2 = list(
+            set(list(torch.where(t >= self.pt[1])[0].numpy()))
+            & set(torch.where(t < self.pt[2])[0].numpy())
+        )
+        idx3 = list(
+            set(list(torch.where(t >= self.pt[2])[0].numpy()))
+            & set(torch.where(t < self.pt[3])[0].numpy())
+        )
+        idx4 = list(
+            set(list(torch.where(t >= self.pt[3])[0].numpy()))
+            & set(torch.where(t < self.pt[4])[0].numpy())
+        )
+        idx5 = list(
+            set(list(torch.where(t >= self.pt[4])[0].numpy()))
+            & set(torch.where(t <= self.pt[5])[0].numpy())
+        )
 
         if idx1:
             out1 = self.Q1(x[idx1, :])
@@ -644,5 +722,3 @@ class Multi_head(nn.Module):
             out[idx5, :] = out[idx5, :] + out5
 
         return out
-
-

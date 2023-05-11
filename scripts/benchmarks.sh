@@ -1,6 +1,7 @@
-num_parallel=40
+num_parallel=1
 num_gpus=0
-num_seeds=200
+# num_seeds=200
+num_seeds=1
 seed_offset=0 # $num_seeds
 
 # num_parallel=30
@@ -8,8 +9,9 @@ seed_offset=0 # $num_seeds
 # num_seeds=30
 # seed_offset=0 # $num_seeds
 
-datasets=("ihdp-N" "sim-B" "news-N" "sim-N")
-# datasets=("sim-B")
+#datasets=("ihdp-N" "sim-B" "news-N" "sim-N")
+datasets=("tcga-B")
+#datasets=("sim-B")
 # datasets=("ihdp-N" "news-N" "sim-N")
 # datasets=("medisynth")
 
