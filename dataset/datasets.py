@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import TensorDataset, Dataset, DataLoader
 from torch import cat, stack
 from torch import Tensor
+from tresnet.models import VCNet
 
 
 from typing import Optional, Tuple, Dict
@@ -20,6 +21,7 @@ DATASETS = (
     "news-B",  # News modification in SCIGAN (Bica et al., 2020)
     "tcga-B",  # TCGA modification in SCIGAN (Bica et al., 2020)
     "sim-T",  # Simulated data in E2B (Taha Bahadori et al., 2022)
+    "medisynth", # FRrom fitting to the Medicare example
 )
 
 
@@ -117,18 +119,13 @@ def load_data(
         x = np.random.multivariate_normal(
             mean=np.zeros((n_confounders,)), cov=tridiagonal_matrix, size=n_samples
         )
+        x = torch.FloatTensor(x)
 
-        np.random.seed(5)
-        beta = np.array(
-            [
-                np.random.uniform(low=-1, high=1, size=n_confounders)
-                for _ in range(n_samples)
-            ]
-        )
-        mu_t = np.sin((beta * x).sum(axis=1))
+        beta = torch.FloatTensor(np.random.uniform(low=-1, high=1, size=n_confounders))
+        mu_t = np.sin(x @ beta)
 
         # t is the treatment
-        t = np.random.normal(mu_t)
+        t = torch.sigmoid(mu_t + 0.3 * torch.randn(n_samples))
 
         ix_list = torch.randperm(n_samples)
         train_ix = ix_list[:800]
@@ -236,23 +233,76 @@ def load_data(
             "V": V,
         }
 
+        # Load Neural 
+
         return D
 
-    elif dataset == "sim-B":  # Simulated data in SCIGAN (Bica et al., 2020)
-        raise NotImplementedError
+    elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
+        tcga_data = pickle.load(open("./dataset/tcga/tcga_semi_synthetic.pkl", "rb"))
+
+        D = {
+            "x": torch.FloatTensor(tcga_data["x"]),
+            "t": torch.FloatTensor(tcga_data["t"]),
+            "train_ix": torch.LongTensor(tcga_data["train_idx"]),
+            "test_ix": torch.LongTensor(tcga_data["test_idx"]),
+            "y": torch.FloatTensor(tcga_data["y"]),
+        }
+
+        return D
+
     elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
-    elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
-        raise NotImplementedError
+
     elif dataset == "sim-T":  # Simulated data in E2B (Taha Bahadori et al., 2022)
         raise NotImplementedError
+    elif dataset == "medisynth":
+        import pickle 
+        with open('dataset/medisynth/medisynth.pkl', 'rb') as f:
+            data = pickle.load(f)
+        # make train and test split indices 80/20 splits
+        n = len(data['treatment'])
+        train_idx = np.random.choice(n, int(0.8*n), replace=False)
+        test_idx = np.setdiff1d(np.arange(n), train_idx)
+
+        #   must be identical to synthetiza_medicare.py
+        density_estimator_config = [(data["covariates"].shape[1], 50, 1), (50, 50, 1)]
+        pred_head_config = [(50, 50, 1), (50, 1, 1)]
+        model = VCNet(
+            density_estimator_config,
+            num_grids=30,
+            pred_head_config=pred_head_config,
+            spline_degree=2,
+            spline_knots=[0.33, 0.66],
+            dropout=0.0
+        )
+        # load best model
+        model.load_state_dict(torch.load("dataset/medisynth/medisynth.pth"))
+        model.eval()
+        # get prediction
+        t = data["treatment"]
+        x = data["covariates"]
+        with torch.no_grad():
+            q = model(t, x)["predicted_outcome"]
+        qmin = float(q.min())
+        qmax = float(q.max())
+
+        D = {
+            "x": torch.FloatTensor(data["covariates"]),
+            "t": torch.FloatTensor(data["treatment"]),
+            "train_ix": torch.LongTensor(train_idx),
+            "test_ix": torch.LongTensor(test_idx),
+            "qmin": qmin,
+            "qmax": qmax,
+        }
+        return D
     else:
         raise ValueError(dataset)
 
 
+
 def support(dataset: str) -> str:
     """Returns link and inverse link"""
-    if dataset in ("sim-N", "ihdp-N", "news-N"):  # VCNet datasets (Nie et al., 2021)
+    if dataset in ("sim-N", "ihdp-N", "news-N", "sim-B", "medisynth"):  # VCNet datasets (Nie et al., 2021)
         return "unit"
     else:
         return "real"
@@ -279,33 +329,34 @@ def outcome(
 
     elif dataset == "sim-B":
 
-        def hermit_polynomial(treatment):
-            np.random.seed(5)
-            gamma_0, gamma_1, gamma_2, gamma_3 = np.random.normal(size=4)
+        if noise is not None:
+            beta, gams, error = noise
+        else:
+            beta = torch.randn(5)
+            gams = torch.randn(4)
+            error = noise_scale * torch.randn_like(t)
+
+        def hermit_polynomial(treatment, gams):
+            # gamma_0, gamma_1, gamma_2, gamma_3 = np.random.normal(size=4)
             return (
-                gamma_0
-                + (gamma_1 * treatment)
-                + (gamma_2 * (treatment**2 - 1))
-                + (gamma_3 * (treatment**3 - (3 * treatment)))
+                gams[0]
+                + (gams[1] * treatment)
+                + (gams[2] * (treatment**2 - 1))
+                + (gams[3] * (treatment**3 - (3 * treatment)))
             )
 
-        np.random.seed(5)
-        beta = np.array(
-            [
-                np.random.uniform(low=-1, high=1, size=n_confounders)
-                for _ in range(n_samples)
-            ]
-        )
-
-        beta_x = (beta * x).sum(axis=1)
-        beta_x_norm = beta_x / np.linalg.norm(beta_x, ord=2)
+        # beta_x = x @ beta
+        # beta_x_norm = beta_x / np.linalg.norm(beta_x, ord=2)
         # h(a) = gam[0] + gam[1] * a + gam[2] * (a**2 - 1) + gam[3] * (a***3 - 3 * a)
-        hermit = hermit_polynomial(a) + hermit_polynomial(beta_x_norm)
+        hermit = hermit_polynomial(torch.logit(t), gams) + x @ beta
 
-        y = np.random.normal(hermit, 0.5**2)
+
+        y = hermit + error
 
         #! Dimeji:  I am assuming we don't need any noise in this case, so I set noise to None
-        return y, None
+        #! Mauricio: treated same as others
+        noise = (beta, gams, error)
+        return y, noise
 
     elif dataset == "ihdp-N":  # IHDP modification in VCNet (Niet et al., 2021)
         x1, x2, x3, x4, x5 = [x[:, j] for j in [0, 1, 2, 4, 5]]
@@ -329,7 +380,6 @@ def outcome(
         V = D["V"]
         news = x
 
-        np.random.seed(5)
 
         A = ((torch.mul(V[1], news)).sum(1)) / ((torch.mul(V[2], news)).sum(1))
         res1 = torch.clamp(torch.exp(0.3 * torch.pi * A - 1), min=-2, max=2)
@@ -341,12 +391,43 @@ def outcome(
         y = res + noise
         return y, noise
 
-    elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
-        raise NotImplementedError
     elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
+        y = D["y"]
+
+        return y
+
+    elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
     elif dataset == "sim-T":  # Simulated data in E2B (Taha Bahadori et al., 2022)
         raise NotImplementedError
+    elif dataset == "medisynth":
+        # make neural network model
+        density_estimator_config = [(D["x"].shape[1], 50, 1), (50, 50, 1)]
+        pred_head_config = [(50, 50, 1), (50, 1, 1)]
+
+        # must be identical to synthetiza_medicare.py
+        model = VCNet(
+            density_estimator_config,
+            num_grids=30,
+            pred_head_config=pred_head_config,
+            spline_degree=2,
+            spline_knots=[0.33, 0.66],
+            dropout=0.0
+        )
+        # load best model
+        model.load_state_dict(torch.load("dataset/medisynth/medisynth.pth"))
+        model.eval()
+        # get prediction
+        with torch.no_grad():
+            q = model(t, x)["predicted_outcome"]
+            q = (q - D["qmin"]) / (D["qmax"] - D["qmin"])
+
+
+        if noise is None:
+            noise = noise_scale * torch.randn_like(t)
+        y = q + noise
+        return y, noise
+
     else:
         raise ValueError(dataset)
 
@@ -367,8 +448,7 @@ def make_dataset(
 
     D = load_data(dataset, noise_scale=noise_scale, **kwargs)
     x, t, train_ix, test_ix = D["x"], D["t"], D["train_ix"], D["test_ix"]
-    # y, noise = outcome(D, dataset, noise_scale=noise_scale)
-    y, noise = outcome(D, dataset, noise_scale=0.5)
+    y, noise = outcome(D, dataset, noise_scale=noise_scale)
 
     if count:
         scale = y.max()
@@ -390,10 +470,12 @@ def make_dataset(
         delta_scale = None
         shifted_t = [t * float(1 - d) for d in delta_list]
         shift_type = "percent"
+        t_grid = torch.linspace(0, 1, 100)
     elif supp == "real":  # treatment in real line
         delta_scale = t.std()
         shifted_t = [t - delta_scale * d for d in delta_list]
         shift_type = "subtract"
+        t_grid = torch.linspace(t.min(), t.max(), 100)
     else:
         raise NotImplementedError
 
@@ -412,6 +494,14 @@ def make_dataset(
     srf_train = cfs[train_ix, :].mean(0)
     srf_test = cfs[test_ix, :].mean(0)
 
+    # similar as above, compute the exposure response function for t_grid
+    cfs_erf = stack(
+        [outcome(D, dataset, treatment=torch.full_like(t, tcf), noise=noise)[0] for tcf in t_grid], 
+        axis=1
+    )
+    erf_train = cfs_erf[train_ix, :].mean(0)
+    erf_test = cfs_erf[test_ix, :].mean(0)
+
     return {
         "train_matrix": train_matrix,
         "test_matrix": test_matrix,
@@ -419,6 +509,9 @@ def make_dataset(
         "srf_test": srf_test,
         "delta_scale": delta_scale,
         "shift_type": shift_type,
+        "t_grid": t_grid,
+        "erf_train": erf_train,
+        "erf_test": erf_test
     }
 
 

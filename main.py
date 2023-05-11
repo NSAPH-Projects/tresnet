@@ -12,9 +12,9 @@ from copy import deepcopy
 import matplotlib
 matplotlib.use('agg')  # needed in the cluster
 
-from models.models import Drnet, VCNet, RatioNet
+from tresnet.models import Drnet, VCNet, RatioNet, CausalMLP
 from tresnet import ratios
-from models.modules import TargetedRegularizerCoeff
+from tresnet.modules import TargetedRegularizerCoeff
 from dataset.datasets import get_iter, make_dataset, DATASETS, set_seed
 
 
@@ -22,6 +22,9 @@ def main(args: argparse.Namespace) -> None:
     # seed and use gpu when available
     set_seed(1234 + 131 * args.seed)  # like torch manual seed at all levels
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+
+    if args.dataset == "medisynth":
+        args.n_epochs = 200
 
     # experiment_dir
     s1 = f"var_{int(args.var_reg)}"
@@ -45,12 +48,19 @@ def main(args: argparse.Namespace) -> None:
     test_matrix = D["train_matrix"].to(dev)
     shift_type = D["shift_type"]
     n, input_dim = train_matrix.shape[0], train_matrix.shape[1] - 2
+    args.beta = 5* n ** (-0.5)
 
     # make neural network model
     density_estimator_config = [(input_dim, 50, 1), (50, 50, 1)]
     pred_head_config = [(50, 50, 1), (50, 1, 1)]
 
-    if args.ratio != "c_ratio" and not args.drnet:
+    # min value of treatment
+    # amin = min(D["train_matrix"][:, 0].min(), D["test_matrix"][:, 0].min())
+    # max value of treatment
+    # amax = max(D["train_matrix"][:, 0].max(), D["test_matrix"][:, 0].max())
+    amin, amax = 0, 1
+
+    if args.ratio != "c_ratio" and args.backbone == "vcnet":
         model = VCNet(
             density_estimator_config,
             num_grids=args.n_grid,
@@ -58,6 +68,8 @@ def main(args: argparse.Namespace) -> None:
             spline_degree=2,
             spline_knots=[0.33, 0.66],
             dropout=args.dropout,
+            amin=amin,
+            amax=amax,
         ).to(dev)
         density_head = model.density_estimator
 
@@ -65,7 +77,7 @@ def main(args: argparse.Namespace) -> None:
             density_head.requires_grad_(False)
         if args.ratio_only:
             model.prediction_head.requires_grad_(False)
-    elif args.ratio == "c_ratio" and not args.drnet:
+    elif args.ratio == "c_ratio" and args.backbone == "vcnet":
         model = RatioNet(
             delta_list,
             density_estimator_config,
@@ -83,7 +95,7 @@ def main(args: argparse.Namespace) -> None:
         if args.ratio_only:
             model.prediction_head.requires_grad_(False)
     
-    elif args.drnet:
+    elif args.backbone == "drnet":
         cfg = [(50, 50, 1, 'relu'), (50, 1, 1, 'id')]
         model = Drnet(
             density_estimator_config,
@@ -91,11 +103,28 @@ def main(args: argparse.Namespace) -> None:
             num_grids=args.n_grid,
             pred_head_config=cfg,
             dropout=args.dropout,
+            amin=amin,
+            amax=amax,
         ).to(dev)
         # args.outcome_only = True
         density_head = model.density_estimator
         if args.outcome_only:
             density_head.requires_grad_(False)       
+    elif args.backbone == "mlp":
+        model = CausalMLP(
+            density_estimator_config,
+            num_grids=args.n_grid,
+            pred_head_config=pred_head_config,
+            dropout=args.dropout,
+            amin=amin,
+            amax=amax
+        ).to(dev)
+        density_head = model.density_estimator
+        outcome_head = model.outcome_head
+        if args.outcome_only:
+            density_head.requires_grad_(False)
+        if args.ratio_only:
+            outcome_head.requires_grad_(False) 
 
 
 
@@ -141,7 +170,9 @@ def main(args: argparse.Namespace) -> None:
     elif args.tr == "vc":
         targeted_regularizer = TargetedRegularizerCoeff(
             degree=2,
-            knots=delta_list[::2],
+            knots=np.linspace(0, 1, num=10)[1:-1].tolist(),
+            dmin=min(delta_list),
+            dmax=max(delta_list),
         ).to(dev)
         tr_params = targeted_regularizer.parameters()
         optim_params.append(
@@ -157,14 +188,14 @@ def main(args: argparse.Namespace) -> None:
         )
 
     best_loss, best_model, best_iter = 1e6, deepcopy(model), 0
-    if args.tr_reg:
-        best_tr = deepcopy(targeted_regularizer) if args.tr == "vc" else targeted_regularizer.clone()
+    # if args.tr_reg:
+    best_tr = deepcopy(targeted_regularizer) if args.tr == "vc" else targeted_regularizer.clone()
     best_model.eval()
 
     # training loop
     train_loader = get_iter(train_matrix, batch_size=args.batch_size, shuffle=True)
 
-    eps_lr = 0.25 / len(train_loader)
+    eps_lr = 0.1 / len(train_loader)
 
     for epoch in range(args.n_epochs):
         # dict to store all the losses per batch
@@ -188,7 +219,7 @@ def main(args: argparse.Namespace) -> None:
             # 1. density negative loglikelihood loss
             if args.ratio == "erm" and not args.outcome_only:
                 probs = model_output["prob_score"]
-                density_negll = -probs.log().mean()
+                density_negll = -(probs + 1e-6).log().mean()
                 losses["density_negll"].append(density_negll.item())
                 if not args.outcome_only:
                     total_loss = total_loss + density_negll
@@ -247,7 +278,7 @@ def main(args: argparse.Namespace) -> None:
                     eps = targeted_regularizer(torch.full_like(t, d))
                 ratio = log_ratio.clamp(-10, 10).exp()
                 ratio_ = ratio.detach() if args.detach_ratio else ratio
-                if args.ratio_norm:
+                if args.ratio_norm: #! alert
                     ratio_ = ratio_ / ratio_.mean()
                 if args.pert == "simple":
                     y_pert = y_hat + eps
@@ -331,19 +362,19 @@ def main(args: argparse.Namespace) -> None:
             # update epsilon (coordinate ascent)
 
         # evaluation
-        if (epoch + 1) % args.eval_every == 0:
+        if epoch == 0 or (epoch + 1) % args.eval_every == 0:
             model.eval()
             with torch.no_grad():
                 # replace best model if improves
+                M = test_matrix
+                t, x, y = M[:, 0], M[:, 1:-1], M[:, -1]
+                output = model(t, x)
+                z = output["z"]
+                y_hat = output["predicted_outcome"]
                 if args.val in ("is", "test"):
-                    M = test_matrix
-                    t, x, y = M[:, 0], M[:, 1:-1], M[:, -1]
-                    output = model.forward(t, x)
-                    z = output["z"]
-                    y_hat = output["predicted_outcome"]
                     val_losses = []
                     for j, d in enumerate(delta_list):
-                        if args.val == "test":
+                        if args.val == "test" or args.outcome_only:
                             ratio = torch.ones_like(t)
                         else:
                             if args.ratio != "c_ratio":
@@ -389,6 +420,7 @@ def main(args: argparse.Namespace) -> None:
                 elif args.val == "none":
                     best_model = deepcopy(model)
                     best_model.eval()
+                    best_iter = epoch
 
                 # obtain all evaluation metrics
 
@@ -406,6 +438,9 @@ def main(args: argparse.Namespace) -> None:
                     z = best_model.forward(t, x)["z"]
                     srf = D["srf_" + part]
                     df[part + "_truth"] = srf
+                    erf = D["erf_" + part]
+                    t_grid = D["t_grid"]
+                    # df[part + "_truth"] = erf
 
                     # dictionaries for all kind of estimates
                     ipw_estims = []
@@ -418,6 +453,8 @@ def main(args: argparse.Namespace) -> None:
                     tr_errors = []
                     plugin_estims = []
                     plugin_errors = []
+                    erf_estims = []
+                    erf_errors = []
 
                     shift_type = D["shift_type"]
 
@@ -476,6 +513,14 @@ def main(args: argparse.Namespace) -> None:
                         plugin_estims.append(estim.item())
                         plugin_errors.append(error.item())
 
+                        # erf_estim, find the value of each shifted treatment in the erf table
+                        t_grid_idx = (t_delta[:, None] < t_grid[None]).long().argmax(dim=1)
+                        erf_estim = erf[t_grid_idx].mean()
+                        error = (erf_estim - truth)
+                        erf_estims.append(erf_estim.item())
+                        erf_errors.append(error.item())
+
+
                     # add estimation error as columns of result dataframe
                     df[part + "_ipw_estim"] = ipw_estims
                     df[part + "_ipw_error"] = ipw_errors
@@ -485,6 +530,8 @@ def main(args: argparse.Namespace) -> None:
                     df[part + "_tr_error"] = tr_errors
                     df[part + "_plugin_estim"] = plugin_estims
                     df[part + "_plugin_error"] = plugin_errors
+                    df[part + "_erf_estim"] = erf_estims
+                    df[part + "_erf_error"] = erf_errors
 
                     # save metrics #TODO: this is only doing test, must upate to use df
                     # for computation
@@ -505,10 +552,12 @@ def main(args: argparse.Namespace) -> None:
                     metrics["plugin_curve_rmse"] = float(
                         np.square(plugin_errors).mean() ** 0.5
                     )
+                    metrics["erf_curve_rmse"] = float(np.square(erf_errors).mean() ** 0.5)
                     metrics["ipw_bias"] = float(np.mean(ipw_errors))
                     metrics["aipw_curve_bias"] = float(np.mean(aipw_errors))
                     metrics["tr_curve_bias"] = float(np.mean(aipw_errors))
                     metrics["pluglin_curve_bias"] = float(np.mean(aipw_errors))
+                    metrics["erf_curve_bias"] = float(np.mean(erf_errors))
                     metrics_path = (
                         f"{args.rdir}/{args.dataset}/{edir}/metrics_{part}.yaml"
                     )
@@ -559,8 +608,8 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", default=0, type=int)
-    parser.add_argument("--n_grid", default=30, type=int)
-    parser.add_argument("--dataset", default="news-N", type=str, choices=DATASETS)
+    parser.add_argument("--n_grid", default=25, type=int)
+    parser.add_argument("--dataset", default="sim-B", type=str, choices=DATASETS)
     parser.add_argument(
         "--pert", default="simple", type=str, choices=("original", "simple")
     )
@@ -568,13 +617,13 @@ if __name__ == "__main__":
     parser.add_argument("--rdir", default="results", type=str)
     parser.add_argument("--edir", default=None, type=str)
     parser.add_argument("--opt", default="sgd", type=str, choices=("adam", "sgd"))
-    parser.add_argument("--val", default="test", type=str, choices=("is", "val", "none"))
+    parser.add_argument("--val", default="none", type=str, choices=("is", "val", "none"))
     parser.add_argument("--n_train", default=500, type=int)
     parser.add_argument("--n_test", default=200, type=int)
     parser.add_argument("--n_epochs", default=2000, type=int)
     parser.add_argument("--batch_size", default=4000, type=int)
     parser.add_argument("--eval_every", default=100, type=int)
-    parser.add_argument("--wd", default=5e-3, type=float)
+    parser.add_argument("--wd", default=1e-3, type=float)
     parser.add_argument("--lr", default=1e-4, type=float) 
     parser.add_argument("--ls", default=0.1, type=float) 
 
@@ -582,10 +631,10 @@ if __name__ == "__main__":
     parser.add_argument("--noise", default=0.1, type=float)  # it is 0.5 in vcnet paper
     parser.add_argument("--silent", default=False, action="store_true")
     parser.add_argument("--ratio_norm", default=True, action="store_true")
-    parser.add_argument("--dropout", default=0.05, type=float)
+    parser.add_argument("--dropout", default=0.2, type=float)
 
     # regularizations availables
-    parser.add_argument("--ratio", default="gps_ratio", type=str, choices=("erm", "gps_ratio", "c_ratio"))
+    parser.add_argument("--ratio", default="erm", type=str, choices=("erm", "gps_ratio", "c_ratio"))
     parser.add_argument("--var_reg", default=False, action="store_true")
     parser.add_argument("--outcome_only", default=False, action="store_true")
     parser.add_argument("--ratio_only", default=False, action="store_true")
@@ -596,7 +645,7 @@ if __name__ == "__main__":
     parser.add_argument("--tr_reg", default=False, action="store_true")
     parser.add_argument("--poisson", default=False, action="store_true")
     parser.add_argument("--count", default=False, action="store_true")
-    parser.add_argument("--drnet", default=False, action="store_true")
+    parser.add_argument("--backbone", default="vcnet", choices=("vcnet", "drnet", "mlp"))
     parser.add_argument("--target", type=str, default="si", choices=("si", "erf"))
     parser.add_argument("--tr", default="discrete", choices=("discrete", "vc"))
     parser.add_argument("--fit_ratio_scale", default=False, action="store_true")

@@ -166,7 +166,7 @@ class VCDiscreteEstimator(nn.Module):
 
 
 class DiscreteDensityEstimator(nn.Module):
-    def __init__(self, in_dimension, num_grids, bias=True):
+    def __init__(self, in_dimension, num_grids, bias=True, amin=0, amax=1):
         """This module uses the Encoder and a linear layer + interpolation
         to output intermediate vector z and the conditional density/generalized propensity score
 
@@ -177,6 +177,7 @@ class DiscreteDensityEstimator(nn.Module):
 
         super(DiscreteDensityEstimator, self).__init__()
         self.num_grids = num_grids
+        self.amin, self.amax = amin, amax
 
         out_dimension = num_grids + 1
 
@@ -199,12 +200,13 @@ class DiscreteDensityEstimator(nn.Module):
 
         # These outputs are needed fto execute the last equation in page 4 of the paper
         # Linear interpolation
+        t = (treatment - self.amin) / (self.amax - self.amin)
         (
             lower_grid_idx,
             upper_grid_idx,
             distance_to_lower,
-        ) = get_linear_interpolation_params(treatment, self.num_grids)
-        in_support = (treatment >= 0.0) & (treatment <= 1.0)
+        ) = get_linear_interpolation_params(t, self.num_grids)
+        in_support = (t >= 0.0) & (t <= 1.0)
 
         ix = torch.arange(out.shape[0])
         lower_bounds = out[ix, lower_grid_idx]  # Get values at the lower grid index
@@ -385,11 +387,12 @@ class TruncatedPowerBasis:
 
 
 class TargetedRegularizerCoeff(nn.Module):
-    def __init__(self, degree, knots):
+    def __init__(self, degree, knots, dmin=0.0, dmax=1.0):
         super(TargetedRegularizerCoeff, self).__init__()
         self.spline_basis = TruncatedPowerBasis(degree, knots)
         self.num_basis = self.spline_basis.num_of_basis  # num of basis
         self.weight = nn.Parameter(torch.rand(self.num_basis), requires_grad=True)
+        self.dmin, self.dmax = dmin, dmax
 
     def forward(self, t):
         """
@@ -400,6 +403,7 @@ class TargetedRegularizerCoeff(nn.Module):
         Returns:
             torch.tensor
         """
+        t = (t - self.dmin) / (self.dmax - self.dmin)
         out = self.spline_basis(t)
         out = torch.matmul(out, self.weight)
         return out
