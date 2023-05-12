@@ -4,10 +4,12 @@ channels:
   - pytorch
   - defaults
 dependencies:
-  - python=3.11.3
+  - python=3.10.10
   - pytorch::pytorch=2.0.1
   - torchaudio=2.0.2
   - torchvision=0.15.2
+  - tensorboard=2.13
+  - lightning=2.0.2
   - numpy=1.24.3
   - pandas=2.0.1
   - jupyter=1.0.0

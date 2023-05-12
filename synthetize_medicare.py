@@ -1,3 +1,4 @@
+# TODO: this file will break under the refactoring, need to fix it
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -14,7 +15,7 @@ import proplot as pplt
 import matplotlib
 matplotlib.use('agg') 
 
-from tresnet.models import VCNet, RatioNet
+from tresnet.models import DynamicNet, RatioNet
 #from dataset.dataset import get_iter, make_dataset, DATASETS, set_seed
 
 from dataset.medicare import set_seed, get_iter, DataMedicare
@@ -104,15 +105,15 @@ def main(args: argparse.Namespace) -> None:
     pred_head_config = [(50, 50, 1), (50, 1, 1)]
 
 
-    model = VCNet(
+    model = DynamicNet(
         density_estimator_config,
-        num_grids=args.n_grid,
-        pred_head_config=pred_head_config,
+        density_grid_size=args.n_grid,
+        outcome_config=pred_head_config,
         spline_degree=2,
         spline_knots=[0.33, 0.66],
         dropout=0.0
     ).to(dev)
-    density_head = model.density_estimator
+    density_head = model.density_head
     density_head.requires_grad_(False)
 
     model._initialize_weights()
