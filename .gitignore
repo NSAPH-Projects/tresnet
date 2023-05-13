@@ -1,6 +1,7 @@
 
-# Lightning
+# Logs
 lightning_logs
+logs
 
 # Local ignores for Dimeji
 !dataset/tcga/create_synthetic_TCGA.ipynb

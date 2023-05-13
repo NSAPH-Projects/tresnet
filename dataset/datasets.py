@@ -482,8 +482,8 @@ def make_dataset(
         # cfs = (r * cfs2_unit).exp().round()
 
     # average the counterfactuals for value of delta
-    srf_train = cfs[train_ix, :].mean(0)
-    srf_test = cfs[test_ix, :].mean(0)
+    train_srf = cfs[train_ix, :].mean(0)
+    test_srf = cfs[test_ix, :].mean(0)
 
     # similar as above, compute the exposure response function for t_grid
     cfs_erf = stack(
@@ -506,8 +506,8 @@ def make_dataset(
         y_std = train_matrix[:, -1].std()
         train_matrix[:, -1] = (train_matrix[:, -1] - y_mean) / y_std
         test_matrix[:, -1] = (test_matrix[:, -1] - y_mean) / y_std
-        srf_train = (srf_train - y_mean) / y_std
-        srf_test = (srf_test - y_mean) / y_std
+        train_srf = (train_srf - y_mean) / y_std
+        test_srf = (test_srf - y_mean) / y_std
         erf_train = (erf_train - y_mean) / y_std
         erf_test = (erf_test - y_mean) / y_std
         t_min = train_matrix[:, 0].min()
@@ -518,8 +518,8 @@ def make_dataset(
     return dict(
         train_matrix=train_matrix,
         test_matrix=test_matrix,
-        srf_train=srf_train,
-        srf_test=srf_test,
+        train_srf=train_srf,
+        test_srf=test_srf,
         erf_train=erf_train,
         erf_test=erf_test,
         shift_scale=shift_scale,
