@@ -1,20 +1,13 @@
-import random
 import os
+from typing import Optional, Tuple, Dict
 
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler
-
-#import pickle
 
 import torch
-from torch.utils.data import TensorDataset, Dataset, DataLoader
 from torch import cat, stack
 from torch import Tensor
-from tresnet.models import VCNet
 
-
-from typing import Optional, Tuple, Dict
 
 DATASETS = (
     "sim-N",  # simu1 simulated data in VCNet (Nie et al., 2021)
@@ -26,52 +19,6 @@ DATASETS = (
     "sim-T",  # Simulated data in E2B (Taha Bahadori et al., 2022)
     "medisynth",  # FRrom fitting to the Medicare example
 )
-
-
-# class DatasetFromMatrix(Dataset):
-#     """Create the pyTorch Dataset object that groes into the dataloader."""
-
-#     def __init__(self, data_matrix):
-#         """
-#         Args: create a torch dataset from a tensor data_matrix with size n * p
-#         [treatment, features, outcome]`z
-#         """
-#         self.data_matrix = data_matrix
-#         self.num_data = data_matrix.shape[0]
-
-#     def __len__(self):
-#         return self.num_data
-
-#     def __getitem__(self, idx: int) -> dict:
-#         sample = self.data_matrix[idx, :]
-
-#         return {
-#             "treatment": sample[0],
-#             "covariates": sample[1:-1],
-#             "outcome": sample[-1],
-#         }
-
-
-def get_iter(data_matrix, batch_size, **kwargs):
-    # dataset = DatasetFromMatrix(data_matrix)
-    treatment, covariates, outcome = (
-        data_matrix[:, 0],
-        data_matrix[:, 1:-1],
-        data_matrix[:, -1],
-    )
-    dataset = TensorDataset(treatment, covariates, outcome)
-    iterator = DataLoader(dataset, batch_size=batch_size, **kwargs)
-    return iterator
-
-def set_seed(seed: int):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.enabled = False
 
 
 def load_data(
@@ -350,46 +297,7 @@ def load_data(
     elif dataset == "sim-T":  # Simulated data in E2B (Taha Bahadori et al., 2022)
         raise NotImplementedError
     elif dataset == "medisynth":
-        import pickle
-
-        with open("dataset/medisynth/medisynth.pkl", "rb") as f:
-            data = pickle.load(f)
-        # make train and test split indices 80/20 splits
-        n = len(data["treatment"])
-        train_idx = np.random.choice(n, int(0.8 * n), replace=False)
-        test_idx = np.setdiff1d(np.arange(n), train_idx)
-
-        #   must be identical to synthetiza_medicare.py
-        density_estimator_config = [(data["covariates"].shape[1], 50, 1), (50, 50, 1)]
-        pred_head_config = [(50, 50, 1), (50, 1, 1)]
-        model = VCNet(
-            density_estimator_config,
-            num_grids=30,
-            pred_head_config=pred_head_config,
-            spline_degree=2,
-            spline_knots=[0.33, 0.66],
-            dropout=0.0,
-        )
-        # load best model
-        model.load_state_dict(torch.load("dataset/medisynth/medisynth.pth"))
-        model.eval()
-        # get prediction
-        t = data["treatment"]
-        x = data["covariates"]
-        with torch.no_grad():
-            q = model(t, x)["predicted_outcome"]
-        qmin = float(q.min())
-        qmax = float(q.max())
-
-        D = {
-            "x": torch.FloatTensor(data["covariates"]),
-            "t": torch.FloatTensor(data["treatment"]),
-            "train_ix": torch.LongTensor(train_idx),
-            "test_ix": torch.LongTensor(test_idx),
-            "qmin": qmin,
-            "qmax": qmax,
-        }
-        return D
+        raise NotImplementedError
     else:
         raise ValueError(dataset)
 
@@ -489,6 +397,7 @@ def outcome(
 
         if noise is None:
             noise = noise_scale * torch.randn_like(t)
+
         y = res + noise
         return y, noise
 
@@ -508,39 +417,14 @@ def outcome(
     elif dataset == "sim-T":  # Simulated data in E2B (Taha Bahadori et al., 2022)
         raise NotImplementedError
     elif dataset == "medisynth":
-        # make neural network model
-        density_estimator_config = [(D["x"].shape[1], 50, 1), (50, 50, 1)]
-        pred_head_config = [(50, 50, 1), (50, 1, 1)]
-
-        # must be identical to synthetiza_medicare.py
-        model = VCNet(
-            density_estimator_config,
-            num_grids=30,
-            pred_head_config=pred_head_config,
-            spline_degree=2,
-            spline_knots=[0.33, 0.66],
-            dropout=0.0,
-        )
-        # load best model
-        model.load_state_dict(torch.load("dataset/medisynth/medisynth.pth"))
-        model.eval()
-        # get prediction
-        with torch.no_grad():
-            q = model(t, x)["predicted_outcome"]
-            q = (q - D["qmin"]) / (D["qmax"] - D["qmin"])
-
-        if noise is None:
-            noise = noise_scale * torch.randn_like(t)
-        y = q + noise
-        return y, noise
-
+        raise NotImplementedError
     else:
         raise ValueError(dataset)
 
 
 def make_dataset(
     dataset: str,
-    delta_list: Tensor,
+    shift_values: Tensor,
     noise_scale: float = 0.5,
     count: bool = False,
     standardize: bool = True,
@@ -574,13 +458,13 @@ def make_dataset(
     supp = support(dataset)
 
     if supp == "unit":  # treatment in (0,1)
-        delta_scale = None
-        shifted_t = [t * float(1 - d) for d in delta_list]
+        shift_scale = None
+        shifted_t = [t * float(1 - d) for d in shift_values]
         shift_type = "percent"
         t_grid = torch.linspace(0, 1, 100)
     elif supp == "real":  # treatment in real line
-        delta_scale = t.std()
-        shifted_t = [t - delta_scale * d for d in delta_list]
+        shift_scale = t.std()
+        shifted_t = [t - shift_scale * d for d in shift_values]
         shift_type = "subtract"
         t_grid = torch.linspace(t.min(), t.max(), 100)
     else:
@@ -626,22 +510,22 @@ def make_dataset(
         srf_test = (srf_test - y_mean) / y_std
         erf_train = (erf_train - y_mean) / y_std
         erf_test = (erf_test - y_mean) / y_std
-        # t_min = train_matrix[:, 0].min()
-        # t_max = train_matrix[:, 0].max()
-        # train_matrix[:, 0] = (train_matrix[:, 0] - t_min) / (t_max - t_min)
-        # test_matrix[:, 0] = (test_matrix[:, 0] - t_min) / (t_max - t_min)
+        t_min = train_matrix[:, 0].min()
+        t_max = train_matrix[:, 0].max()
+        train_matrix[:, 0] = (train_matrix[:, 0] - t_min) / (t_max - t_min)
+        test_matrix[:, 0] = (test_matrix[:, 0] - t_min) / (t_max - t_min)
 
-    return {
-        "train_matrix": train_matrix,
-        "test_matrix": test_matrix,
-        "srf_train": srf_train,
-        "srf_test": srf_test,
-        "delta_scale": delta_scale,
-        "shift_type": shift_type,
-        "t_grid": t_grid,
-        "erf_train": erf_train,
-        "erf_test": erf_test,
-    }
+    return dict(
+        train_matrix=train_matrix,
+        test_matrix=test_matrix,
+        srf_train=srf_train,
+        srf_test=srf_test,
+        erf_train=erf_train,
+        erf_test=erf_test,
+        shift_scale=shift_scale,
+        shift_type=shift_type,
+        t_grid=t_grid,
+    )
 
 
 def Max(*args):
