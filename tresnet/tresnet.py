@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 
 from tresnet import layers, shifts
+from tresnet.glms import link_and_inverse_link
 
 matplotlib.use("Agg")
 
@@ -22,17 +23,6 @@ class TresnetOuputs:
     pred_outcome: Tensor | None = None  # predicted outcome
     features: Tensor | None = None  # hidden features
     fluctuation: Tensor | None = None  # fluctuations
-
-
-def link_and_inverse_link(
-    loss_family: Literal["gaussian", "bernoulli", "poisson"]
-) -> tuple[callable, callable]:
-    if loss_family == "gaussian":
-        return lambda x: x, lambda x: x
-    elif loss_family == "bernoulli":
-        return torch.sigmoid, lambda x: torch.logit(x + 1e-8)
-    elif loss_family == "poisson":
-        return torch.exp, torch.log
 
 
 class OutcomeHead(nn.Module):
