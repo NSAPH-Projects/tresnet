@@ -1,0 +1,3 @@
+outcome_freeze: true
+ratio_loss: ps
+estimator: ipw

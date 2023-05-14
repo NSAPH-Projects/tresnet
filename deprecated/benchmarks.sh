@@ -15,8 +15,13 @@ datasets=("tcga-B")
 # datasets=("ihdp-N" "news-N" "sim-N")
 # datasets=("medisynth")
 
+# Flags forall experments
 extra_flags="--silent --eval_every=2000"
-# extra_flags="--silent --eval_every=50"
+# extra_flags="--silent --eval_every=50
+
+# Define configs for experiments
+tr="--tr"
+
 
 printf "\t***** SPLINE + IPW + Plugin + AIPW + TRESNET + DRNET + MLP ****\n"
 # 
