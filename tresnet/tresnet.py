@@ -216,7 +216,7 @@ class Tresnet(pl.LightningModule):
         tr_spline_degree: int = 2,
         tr_spline_knots: list[float] = list(np.linspace(0, 1, num=10)[1:-1]),
         tr_param_type: Literal["discrete", "spline"] = "discrete",
-        tr_use_clever: bool = True,
+        tr_clever: bool = True,
         tr_weight_norm: bool = False,
         tr_loss_weight: float = 0.1,
         act: nn.Module = nn.SiLU,
@@ -227,6 +227,7 @@ class Tresnet(pl.LightningModule):
         true_srf_train: Tensor | None = None,
         true_srf_val: Tensor | None = None,
         plot_every_n_epochs: int = 100,
+        estimator: None | Literal['ipw', 'aipw', 'outcome', 'tr'] = None
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -237,7 +238,7 @@ class Tresnet(pl.LightningModule):
         self.ratio_loss_weight = ratio_loss_weight
         self.tr = tr
         self.tr_param_type = tr_param_type
-        self.tr_use_clever = tr_use_clever
+        self.tr_clever = tr_clever
         self.tr_weight_norm = tr_weight_norm
         self.tr_loss_weight = tr_loss_weight
         self.optimizer = opt_optimizer
@@ -247,6 +248,7 @@ class Tresnet(pl.LightningModule):
         self.register_buffer("true_srf_val", true_srf_val)
         self.shift = getattr(shifts, shift_type.capitalize())()
         self.plot_every_n_epochs = plot_every_n_epochs
+        self.estimator = estimator
 
         # layer kwargs
         lkwargs = dict(
@@ -293,11 +295,12 @@ class Tresnet(pl.LightningModule):
             self.tr_model = layers.SplineFluctuation(tr_spline_degree, tr_spline_knots)
 
         # holders for some of the estimators of SRFs
-        self.estimator_names = ["srf_tr", "srf_biased", "srf_ipw"]
+        self.estimator_names = ["srf_tr", "srf_outcome", "srf_ipw", "srf_aipw"]
         self.estimators_batches = defaultdict(list)  # remember to clear on epoch end
-        for name in self.estimator_names:
-            for part in ["train", "val"]:
+        for part in ["train", "val"]:
+            for name in self.estimator_names:
                 self.register_buffer(f"{name}_{part}", torch.zeros(len(shift_values)))
+            self.register_buffer(f"srf_estimator_{part}", torch.zeros(len(shift_values)))
 
         # freeze models if necessary
         if self.outcome_freeze:
@@ -371,7 +374,7 @@ class Tresnet(pl.LightningModule):
         if self.tr_weight_norm:
             w = w / w.mean(0, keepdim=True)
 
-        if self.tr_use_clever:
+        if self.tr_clever:
             fluct = w * fluct
             w = None
 
@@ -389,23 +392,26 @@ class Tresnet(pl.LightningModule):
 
         # 4. estimators per batch
         with torch.no_grad():
-            srf = torch.zeros_like(self.shift_values)
-            srf_biased = torch.zeros_like(self.shift_values)
+            srf_tr = torch.zeros_like(self.shift_values)
+            srf_outcome = torch.zeros_like(self.shift_values)
             srf_ipw = torch.zeros_like(self.shift_values)
+            srf_aipw = torch.zeros_like(self.shift_values)
 
             srf_adj = fluct.mean(0)
             shifted = self.shift(treatment[:, None], self.shift_values[None, :])
 
             for i in range(len(self.shift_values)):
-                link, _ = link_and_inverse_link(self.outcome_family)
-                pred = self.outcome(shifted[:, i], features).squeeze(1)
-                srf[i] = link(pred + srf_adj[i]).mean()
-                srf_biased[i] = link(pred).mean()
+                link, invlink = link_and_inverse_link(self.outcome_family)
+                pred = link(self.outcome(shifted[:, i], features).squeeze(1))
+                srf_tr[i] = link(invlink(pred) + srf_adj[i]).mean()
+                srf_outcome[i] = pred.mean()
                 srf_ipw[i] = (outcome * w[:, i]).mean() / w[:, i].mean()
+                srf_aipw[i] = (w[:, i] * (outcome - pred) + pred).mean()
 
-            estimators["srf_tr"] = srf
-            estimators["srf_biased"] = srf_biased
+            estimators["srf_tr"] = srf_tr
+            estimators["srf_outcome"] = srf_outcome
             estimators["srf_ipw"] = srf_ipw
+            estimators["srf_aipw"] = srf_aipw
 
         return losses, estimators
 
@@ -458,25 +464,32 @@ class Tresnet(pl.LightningModule):
             error = F.mse_loss(estimated[name], truth)
             self.log(f"{part}/{name}", error)
 
+            # if the estimator specific to the run was declared
+            # then save it under a special name srf_estimator
+            if self.estimator is not None and (name == f"srf_{self.estimator}"):
+                self.log(f"{part}/estimator_bias", error)
+                setattr(self, f"srf_estimator_{part}", estimated[name])
+
         ep = self.current_epoch
         if ep == 0 or (ep + 1) % self.plot_every_n_epochs == 0:
             # plot srf vs truth
             fig, ax = plt.subplots()
             ax.plot(self.shift_values, truth, label="truth", c="black", ls="--")
-            for name, value in self.estimated:
+            for name, value in estimated.items():
                 ax.plot(self.shift_values, value, label=name)
             ax.set_xlabel("shift")
             ax.set_ylabel("srf")
             ax.legend()
-            self.logger.experiment.add_figure(f"{part}/{name}_fig", fig, ep)
+            self.logger.experiment.add_figure(f"{part}/fig", fig, ep)
+
+        if self.estimator is not None:
+            self.log(f"{part}/estimator_loss", getattr(self, f"{self.estimator}_{part}"))
 
     def on_train_epoch_end(self):
         self._on_end("train")
 
     def on_validation_epoch_end(self):
         self._on_end("val")
-        if self.true_srf_val is not None:
-            self.log("hp_metric", F.mse_loss(self.srf_tr_val, self.true_srf_val))
 
     def configure_optimizers(self):
         main_params = list(self.encoder.parameters())

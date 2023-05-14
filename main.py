@@ -57,7 +57,7 @@ def main(args: argparse.Namespace) -> None:
         ratio_loss_weight=1.0,
         tr=args.tr,
         tr_loss_weight=tr_loss_weight,
-        tr_use_clever=args.use_clever,
+        tr_clever=args.clever,
         tr_param_type=args.tr_type,
         tr_spline_degree=2,
         tr_spline_knots=[0.33, 0.66],
@@ -70,6 +70,7 @@ def main(args: argparse.Namespace) -> None:
         true_srf_train=D["train_srf"],
         true_srf_val=D["test_srf"],
         plot_every_n_epochs=args.plot_every_n_epochs,
+        estimator=args.estimator,
     )
 
     betches_per_epoch = datamodule.training_batches_per_epoch
@@ -126,12 +127,21 @@ def main(args: argparse.Namespace) -> None:
 
     # retrieve and safe last srf estimate
     estimates = dict(
-        train_srf=model.train_srf.detach().cpu().numpy(),
-        test_srf=model.val_srf.detach().cpu().numpy(),
+        train_srf=model.srf_estimator_train.detach().cpu().numpy(),
+        test_srf=model.srf_estimator_val.detach().cpu().numpy(),
+        train_srf_ipw=model.srf_ipw_train.detach().cpu().numpy(),
+        test_srf_ipw=model.srf_ipw_val.detach().cpu().numpy(),
+        train_srf_aipw=model.srf_aipw_train.detach().cpu().numpy(),
+        test_srf_aipw=model.srf_aipw_val.detach().cpu().numpy(),
+        train_srf_tr=model.srf_tr_train.detach().cpu().numpy(),
+        test_srf_tr=model.srf_tr_val.detach().cpu().numpy(),
+        train_srf_outcome=model.srf_outcome_train.detach().cpu().numpy(),
+        test_srf_outcome=model.srf_outcome_val.detach().cpu().numpy(),
         true_srf_train=D["train_srf"],
         true_test_srf=D["test_srf"],
         fluctuation=model.fluct_param().detach().cpu().numpy(),
     )
+
     estimates = pd.DataFrame(estimates)
     estimates.to_csv(f"{tb_logger.log_dir}/srf_estimates.csv", index=False)
 
@@ -151,12 +161,12 @@ if __name__ == "__main__":
     parser.add_argument("--backbone", default="vc", type=str, choices=backbones)
     families = ("gaussian", "poisson", "bernoulli")
     parser.add_argument("--family", default="gaussian", type=str, choices=families)
-    ratio_losses = ("ps", "hybrid", "classifier")
-    parser.add_argument("--ratio_loss", default="ps", type=str, choices=ratio_losses)
+    rlosses = ("ps", "hybrid", "classifier")
+    parser.add_argument("--ratio_loss", default="classifier", type=str, choices=rlosses)
     parser.add_argument("--label_smoothing", default=0.1, type=float)
     parser.add_argument("--tr", default=False, action="store_true")
     parser.add_argument("--epochs", default=2000, type=int)
-    parser.add_argument("--use_clever", default=False, action="store_true")
+    parser.add_argument("--clever", default=False, action="store_true")
     tr_types = ("discrete", "spline")
     parser.add_argument("--tr_type", default="discrete", type=str, choices=tr_types)
     parser.add_argument("--tr_weight_norm", default=False, action="store_true")
@@ -175,12 +185,14 @@ if __name__ == "__main__":
     parser.add_argument("--experiment", default=None, type=str)
     parser.add_argument("--best_model", default=False, action="store_true")
     parser.add_argument("--best_metric", default="val/tr", type=str)
+    estimators = ("ipw", "aipw", "outcome", "tr")
+    parser.add_argument("--estimator", default=None, type=str, choices=estimators)
 
     args = parser.parse_args()
 
     # load config file if provided and set experiment name
     if args.experiment is not None:
-        with open(f"experiments/{args.experiment}.yaml", "r") as f:
+        with open(f"experiment_configs/{args.experiment}.yaml", "r") as f:
             config = yaml.load(f, Loader=yaml.SafeLoader)
         for k, v in config.items():
             setattr(args, k, v)
