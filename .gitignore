@@ -5,7 +5,7 @@ logs
 
 # Local ignores for Dimeji
 !dataset/tcga/create_synthetic_TCGA.ipynb
-*.ipynb
+# *.ipynb
 **/.DS_store
 simu1/
 data/
