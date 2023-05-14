@@ -44,7 +44,7 @@ t_grid = torch.from_numpy(data.to_numpy()).float()
 train_loader = get_iter(train_matrix, batch_size=500, shuffle=False)
 
 density_estimator_config = [(6, 50, 1), (50, 50, 1)]
-num_grid = 10
+n = 10
 
 pred_head_config = [
     (
@@ -69,7 +69,7 @@ targeted_regularizer._initialize_weights()
 torch.manual_seed(seed)
 model = VCNet(
     density_estimator_config,
-    num_grid,
+    n,
     pred_head_config,
     pred_spline_degree,
     pred_spline_knots,
@@ -111,14 +111,14 @@ num_epoch = 800
 
 for epoch in range(num_epoch):
     for idx, item in enumerate(train_loader):
-        t = item["treatment"]
+        input = item["treatment"]
         x = item["covariates"]
         y = item["outcome"]
 
         if is_target_reg:
             optimizer.zero_grad()
-            model_output = model.forward(t, x)
-            targeted_regularizer_coeff = targeted_regularizer(t)
+            model_output = model.forward(input, x)
+            targeted_regularizer_coeff = targeted_regularizer(input)
             loss = criterion(
                 model_output, y, target_reg_coeff=targeted_regularizer_coeff
             )
@@ -126,8 +126,8 @@ for epoch in range(num_epoch):
             optimizer.step()
 
             tr_optimizer.zero_grad()
-            model_output = model.forward(t, x)
-            targeted_regularizer_coeff = targeted_regularizer(t)
+            model_output = model.forward(input, x)
+            targeted_regularizer_coeff = targeted_regularizer(input)
             loss = criterion(
                 model_output, y, target_reg_coeff=targeted_regularizer_coeff
             )

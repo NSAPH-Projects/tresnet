@@ -1,0 +1,4 @@
+ratio_loss: classifier
+tr: true
+clever: true
+estimator: tresnet

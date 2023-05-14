@@ -1,7 +1,12 @@
 
+# Logs
+lightning_logs
+logs
+
 # Local ignores for Dimeji
+!dataset/tcga/create_synthetic_TCGA.ipynb
 *.ipynb
-.DS_store
+**/.DS_store
 simu1/
 data/
 data_medicare/
@@ -10,6 +15,7 @@ data_medicare/
 !notebooks/*.ipynb
 results*
 notebooks/figures
+
 
 # Byte-compiled / osptimized / DLL files
 __pycache__/
@@ -142,3 +148,5 @@ dmypy.json
 .pyre/
 .vscode/
 notebooks/test_dataset.ipynb
+dataset/tcga/tcga_semi_synthetic.pkl
+dataset/tcga/tcga.p
