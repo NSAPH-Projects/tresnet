@@ -3,12 +3,11 @@ num_gpus=0
 num_seeds=24
 seed_offset=0 # $num_seeds
 
-# datasets=("ihdp-N" "news-N" "sim-N" "sim-B")
-datasets=("sim-B")
+datasets=("ihdp-N" "news-N" "sim-N")
 
 extra_flags="--silent --eval_every=2000"
 
-printf "\t***** IPW + Plugin + AIPW + TRESNET + DRNET + MLP ****\n"
+printf "\t***** IPW + Plugin + AIPW + TRESNET + DRNET *****\n"
 
 for dset in "${datasets[@]}"
 do
@@ -38,7 +37,6 @@ do
                 python main.py --dataset ${dset} --seed=$s --rdir "results/benchmarks" --edir "drnet" --outcome_only --drnet ${flags};
                echo "Running --dataset ${dset} main.py --seed=$s --rdir results/benchmarks --edir drnet --tr_reg";
                 python main.py --dataset ${dset} --seed=$s --rdir "results/benchmarks" --edir "drnet_tr" --tr_reg --drnet ${flags};
-                python main.py --dataset ${dset} --seed=$s --rdir "results/benchmarks" --edir "mlp" --mlp --drnet ${flags};            
             ) &
         done
         wait
