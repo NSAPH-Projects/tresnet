@@ -483,7 +483,8 @@ class Tresnet(pl.LightningModule):
             self.logger.experiment.add_figure(f"{part}/fig", fig, ep)
 
         if self.estimator is not None:
-            self.log(f"{part}/estimator_loss", getattr(self, f"{self.estimator}_{part}"))
+            estimator = getattr(self, f"srf_estimator_{part}")
+            self.log(f"{part}/estimator_loss", F.mse_loss(estimator, truth))
 
     def on_train_epoch_end(self):
         self._on_end("train")
@@ -493,12 +494,9 @@ class Tresnet(pl.LightningModule):
 
     def configure_optimizers(self):
         main_params = list(self.encoder.parameters())
-        params_no_intercept = [
-            p for p in self.outcome.parameters() if p is not self.outcome.intercept
-        ]
-        main_params += params_no_intercept
+        main_params += list(self.outcome.parameters())
         main_params += list(self.ratio.parameters())
-
+        main_params = [p for p in main_params if p is not self.outcome.intercept]
         param_groups = [dict(params=main_params, lr=self.lr, weight_decay=self.wd)]
 
         intercept = self.outcome.intercept
