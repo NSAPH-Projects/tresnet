@@ -224,7 +224,7 @@ class Tresnet(pl.LightningModule):
         opt_weight_decay: float = 5e-3,
         opt_optimizer: Literal["adam", "sgd"] = "adam",
         dropout: float = 0.0,
-        true_srf_train: Tensor | None = None,
+        true_train_srf: Tensor | None = None,
         true_srf_val: Tensor | None = None,
         plot_every_n_epochs: int = 100,
         estimator: None | Literal['ipw', 'aipw', 'outcome', 'tr'] = None
@@ -244,7 +244,7 @@ class Tresnet(pl.LightningModule):
         self.optimizer = opt_optimizer
         self.lr = opt_lr
         self.wd = opt_weight_decay
-        self.register_buffer("true_srf_train", true_srf_train)
+        self.register_buffer("true_train_srf", true_train_srf)
         self.register_buffer("true_srf_val", true_srf_val)
         self.shift = getattr(shifts, shift_type.capitalize())()
         self.plot_every_n_epochs = plot_every_n_epochs

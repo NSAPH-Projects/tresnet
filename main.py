@@ -16,7 +16,7 @@ from tresnet.datamodule import DataModule
 
 
 def main(args: argparse.Namespace) -> None:
-    pl.seed_everything(123 * args.seed % 1000000)
+    pl.seed_everything(123 * args.seed)
 
     shift_values = np.linspace(0.0, 0.5, num=args.num_shifts, dtype=np.float32).tolist()
 
@@ -67,7 +67,7 @@ def main(args: argparse.Namespace) -> None:
         opt_weight_decay=args.weight_decay,
         opt_optimizer=args.optimizer,
         dropout=args.dropout,
-        true_srf_train=D["train_srf"],
+        true_train_srf=D["train_srf"],
         true_srf_val=D["test_srf"],
         plot_every_n_epochs=args.plot_every_n_epochs,
         estimator=args.estimator,
@@ -136,7 +136,7 @@ def main(args: argparse.Namespace) -> None:
         test_srf_tr=model.srf_tr_val.detach().cpu().numpy(),
         train_srf_outcome=model.srf_outcome_train.detach().cpu().numpy(),
         test_srf_outcome=model.srf_outcome_val.detach().cpu().numpy(),
-        true_srf_train=D["train_srf"],
+        true_train_srf=D["train_srf"],
         true_test_srf=D["test_srf"],
         fluctuation=model.fluct_param().detach().cpu().numpy(),
     )
@@ -144,7 +144,9 @@ def main(args: argparse.Namespace) -> None:
     estimates = pd.DataFrame(estimates)
     estimates.to_csv(f"{tb_logger.log_dir}/srf_estimates.csv", index=False)
 
-    # save model
+    # save args as yaml
+    with open(f"{tb_logger.log_dir}/args.yaml", "w") as f:
+        yaml.dump(vars(args), f)
 
 
 if __name__ == "__main__":
@@ -192,7 +194,7 @@ if __name__ == "__main__":
 
     # load config file if provided and set experiment name
     if args.experiment is not None:
-        with open(f"experiment_configs/{args.experiment}.yaml", "r") as f:
+        with open(f"configs/{args.experiment}.yaml", "r") as f:
             config = yaml.load(f, Loader=yaml.SafeLoader)
         for k, v in config.items():
             setattr(args, k, v)

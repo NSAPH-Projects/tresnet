@@ -5,16 +5,16 @@ logs
 
 # Local ignores for Dimeji
 !dataset/tcga/create_synthetic_TCGA.ipynb
-*.ipynb
+# *.ipynb
 **/.DS_store
 simu1/
 data/
 data_medicare/
 
 # Local for mauricio; just accept notebooks in this folder
-!notebooks/*.ipynb
-results*
-notebooks/figures
+# !notebooks/*.ipynb
+# results*
+# notebooks/figures
 
 
 # Byte-compiled / osptimized / DLL files
