@@ -76,18 +76,17 @@ def main(args: argparse.Namespace) -> None:
     betches_per_epoch = datamodule.training_batches_per_epoch
 
     # configure directory to save model results, delete contents if experiment
-    logdir = f"{args.logdir}/runs/{args.dataset}/{args.family}/{args.seed:06d}"
+    logdir = f"logs/{args.logdir}/{args.dataset}/{args.family}/{args.seed:06d}"
     if args.experiment is not None:
-        logdir = logdir.replace("/runs", "/experiments")
         logdir += f"/{args.experiment}"
-        if os.path.exists(logdir):
+        if args.clean and os.path.exists(logdir):
             shutil.rmtree(logdir)
 
     # configure loggers
     tb_logger = TensorBoardLogger(
         save_dir=".",
         name=logdir,
-        version="" if args.experiment is not None else None,
+        version="" if args.clean else None,
         default_hp_metric=False,
     )
     csv_logger = CSVLogger(
@@ -171,7 +170,7 @@ if __name__ == "__main__":
     parser.add_argument("--tr_type", default="discrete", type=str, choices=tr_types)
     parser.add_argument("--tr_weight_norm", default=False, action="store_true")
     parser.add_argument("--tr_loss_weight", default=20, type=float)
-    parser.add_argument("--lr", default=3e-4, type=float)
+    parser.add_argument("--lr", default=0.001, type=float)
     parser.add_argument("--weight_decay", default=5e-3, type=float)
     parser.add_argument("--dropout", default=0.0, type=float)
     optimizers = ("adam", "sgd")
@@ -181,12 +180,13 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", default=0, type=int)
     parser.add_argument("--plot_every_n_epochs", default=100, type=int)
     parser.add_argument("--silent", default=False, action="store_true")
-    parser.add_argument("--logdir", default="logs", type=str)
-    parser.add_argument("--experiment", default=None, type=str)
+    parser.add_argument("--logdir", default="runs", type=str)
     parser.add_argument("--best_model", default=False, action="store_true")
     parser.add_argument("--best_metric", default="val/tr", type=str)
     estimators = ("ipw", "aipw", "outcome", "tr")
     parser.add_argument("--estimator", default=None, type=str, choices=estimators)
+    parser.add_argument("--experiment", default=None, type=str)
+    parser.add_argument("--clean", default=False, action="store_true")
 
     args = parser.parse_args()
 

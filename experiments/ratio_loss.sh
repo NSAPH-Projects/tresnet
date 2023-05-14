@@ -1,11 +1,10 @@
 num_parallel=5
 num_gpus=0
 num_seeds=50
-seed_offset=0
 
 datasets=("ihdp-N" "sim-B" "news-N" "sim-N" "tcga-B")
-extra_flags="--silent"
-experiments=("ipw_classifier" "ipw_hybrid" "ipw")
+flags="--silent --clean --logdir=benchmarks/ratio_loss"
+experiments=("ipw_classifier" "ipw_hybrid" "ipw_ps")
 
 for dset in "${datasets[@]}"
 do
@@ -21,14 +20,11 @@ do
             else
                 export CUDA_VISIBLE_DEVICES=''
             fi
-            flags="${extra_flags}"
-            (
-                for exp in "${experiments[@]}"
-                do
-                    echo "Running --dataset ${dset} main.py --seed=$s --experiment ${exp}";
-                    python main.py --dataset ${dset} --seed=$s --experiment ${exp} ${flags};
-                done
-            ) &
+            for exp in "${experiments[@]}"
+            do
+                echo "Running dataset: ${dset} seed: $s experiment: ${exp}";
+                python main.py --dataset ${dset} --seed=$s --experiment ${exp} ${flags};
+            done
         done
         wait
     done
