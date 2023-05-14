@@ -32,14 +32,14 @@ def shift(treatment, delta, shift_type):
 
 
 def log_density_ratio_under_shift(
-    t, delta, density_estimator, z, shift_type, eps=1e-4
+    t, delta, density_estimator, z, shift_type,
 ):
     """z is the hidden vector for efficiency,
     eps just avoids nan on the log"""
     t_inv_delta, log_det = inverse_shift(t, delta, shift_type)
     numer = density_estimator(t_inv_delta, z)
     denom = density_estimator(t, z)
-    log_ratio = torch.log(eps + numer)  + log_det - torch.log(eps + denom)
+    log_ratio = torch.log(1e-10 + numer)  + log_det - torch.log(1e-10 + denom)
 
     return log_ratio
 
