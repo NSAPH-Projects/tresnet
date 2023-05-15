@@ -94,7 +94,7 @@ class RatioHead(nn.Module):
     def __init__(
         self,
         shift_values: list[float],
-        ratio_loss: Literal["ps", "hybrid", "classifier"],
+        ratio_loss: Literal["ps", "hybrid", "multips", "classifier"],
         shift: shifts.Shift,
         in_dim: int,
         ratio_grid_size: int,
@@ -116,6 +116,13 @@ class RatioHead(nn.Module):
         # ratio model
         if ratio_loss in ("ps", "hybrid"):
             self.ps = layers.DiscreteDensityEstimator(in_dim, ratio_grid_size)
+        elif ratio_loss == "multips":
+            self.ps = layers.DiscreteDensityEstimator(in_dim, ratio_grid_size)
+            self.multips = nn.ModuleList()
+            for i in range(len(self.shift_values)):
+                self.multips.append(
+                    layers.DiscreteDensityEstimator(in_dim, ratio_grid_size)
+                )
         elif ratio_loss == "classifier":
             # classifier with num_shifts heads
             args = [in_dim, 1, ratio_spline_degree, ratio_spline_knots]
@@ -148,6 +155,20 @@ class RatioHead(nn.Module):
             denominator = torch.log(ps_obs + 1e-6)
             log_ratio = numerator - denominator
 
+        elif self.ratio_loss == "multips":
+            ps_shift = []
+            ps_obs = []
+            shifted = self.shift(treatment, shift_values)
+            for i in range(len(self.shift_values)):
+                inputs = torch.cat([shifted[:, i, None], features], 1)
+                ps_shift.append(self.multips[i](inputs))
+                inputs = torch.cat([treatment[:, i, None], features], 1)
+                ps_obs.append(self.ps(inputs))
+            ps_shift = torch.stack(ps_shift, 1)
+            ps_obs = torch.stack(ps_obs, 1)
+            numerator = torch.log(ps_shift + 1e-6)
+            denominator = torch.log(ps_obs + 1e-6)
+            log_ratio = numerator - denominator
         elif self.ratio_loss == "classifier":
             log_ratio = []
             for i in range(len(self.shift_values)):
@@ -163,6 +184,17 @@ class RatioHead(nn.Module):
             # likelihood/erm loss
             ps_obs = self.ps(inputs)
             loss_ = -torch.log(ps_obs + 1e-6).mean()
+
+        elif self.ratio_loss == "multips":
+            ps_obs = self.ps(inputs)
+            loss_ = -torch.log(ps_obs + 1e-6).mean()
+            shifted = self.shift(treatment[:, None], self.shift_values[None, :])
+            ps_shifted = [
+                self.multips[i](torch.cat([shifted[:, i, None], features], 1))
+                for i in range(len(self.shift_values))
+            ]
+            ps_shifted = torch.stack(ps_shifted, 1)
+            loss_ = loss_ - torch.log(ps_shifted + 1e-6).mean()
 
         elif self.ratio_loss in ("hybrid", "classifier"):
             # classifier loss, but compute ratio from ps
@@ -190,7 +222,7 @@ class Tresnet(pl.LightningModule):
         outcome_spline_knots: list[float] = [0.33, 0.66],
         glm_family: glms.GLMFamily = glms.Gaussian(),
         ratio_freeze: bool = False,
-        ratio_loss: Literal["ps", "hybrid", "classifier"] = "ps",
+        ratio_loss: Literal["ps", "hybrid", "classifier", "multips"] = "ps",
         ratio_spline_degree: int = 2,
         ratio_spline_knots: list[float] = [0.33, 0.66],
         ratio_grid_size: int = 10,
