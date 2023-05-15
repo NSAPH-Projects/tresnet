@@ -1,3 +1,4 @@
+# parts of this code are adapted from https://github.com/ioanabica/SCIGAN
 import pickle
 
 import numpy as np
@@ -16,19 +17,36 @@ class TCGA(TresnetDataModule, pl.LightningDataModule):
         with open("data/tcga/tcga.p", "rb") as f:
             tcga_data = pickle.load(f)
             patients = normalize_data(tcga_data["rnaseq"])
+        x = torch.tensor(patients, dtype=torch.float32)
+
         variant = self.data_opts["dosage_variant"]
 
         num_weights = 3
-        V = np.random.normal(loc=0.0, scale=1.0, size=(num_weights, patients.shape[1]))
+        V = torch.randn((num_weights, patients.shape[1]))
+        alpha = 2  # dosage bias
         for col in range(V.shape[1]):
-            V[:, col] = V[:, col] / np.linalg.norm(V[:, col], ord=2)
+            V[:, col] = V[:, col] / torch.linalg.norm(V[:, col], ord=2)
 
-        if variant == 1:
-            dosages = generate_dosage_treatment_1(patients, V)  # generate dosages
-        else:
-            raise NotImplementedError(f"Dosage variant {variant} not implemented")
+        if variant in (1, 2):
+            optimal_dosage = 0.5 * (x @ V[1]) / (x @ V[2])
+            dosages = torch.FloatTensor(
+                [
+                    np.random.beta(alpha, compute_beta(alpha, float(elem)))
+                    for elem in optimal_dosage
+                ]
+            )
 
-        x = torch.tensor(patients, dtype=torch.float32)
+        elif variant == 3:
+            self._b = 0.75 * (x @ V[1]) / (x @ V[2])
+            optimal_dosage = torch.where(self._b >= 0.75, self._b / 3.0, 1.0)
+            dosages = torch.FloatTensor(
+                [
+                    np.random.beta(alpha, compute_beta(alpha, elem))
+                    for elem in optimal_dosage
+                ]
+            )
+        dosages = torch.where(optimal_dosage <= 0.001, dosages, 1 - dosages)
+
         t = torch.tensor(dosages, dtype=torch.float32)
         self._V = torch.FloatTensor(V)
         self._treatment = t
@@ -37,8 +55,17 @@ class TCGA(TresnetDataModule, pl.LightningDataModule):
     def linear_predictor(self, covariates: Tensor, treatment: Tensor) -> Tensor:
         V = self._V
         x, t = covariates, treatment
-        C = 10
-        mu = C * ((x @ V[0]) + 12.0 * (x @ V[1]) * t - 12.0 * (x @ V[2]) * (t**2))
+
+        variant = self.data_opts["dosage_variant"]
+        if variant == 1:
+            mu = (x @ V[0]) + 12.0 * (x @ V[1]) * t - 12.0 * (x @ V[2]) * (t**2)
+        elif variant == 2:
+            mu = (x @ V[0]) + torch.sin(torch.pi * ((x @ V[1]) / (x @ V[2])) * t)
+        elif variant == 3:
+            b = self._b
+            mu = (x @ V[0]) + 12.0 * t * (t - b) ** 2
+
+        mu = 10 * mu
         return mu
 
 
@@ -58,45 +85,3 @@ def compute_beta(alpha, optimal_dosage):
         beta = (alpha - 1.0) / float(optimal_dosage) + (2.0 - alpha)
 
     return beta
-
-
-def generate_dosage_treatment_3(
-    x,
-    v,
-    dosage_selection_bias=2,
-    scaling_parameter=10,
-):
-    # Treatment 3
-
-    b = 0.75 * np.dot(x, v[1]) / (np.dot(x, v[2]))
-
-    optimal_dosage = np.array([elem / 3.0 if elem >= 0.75 else 1.0 for elem in b])
-
-    alpha = dosage_selection_bias
-
-    dosage = np.array(
-        [np.random.beta(alpha, compute_beta(alpha, elem)) for elem in optimal_dosage]
-    )
-    return dosage
-
-
-def generate_dosage_treatment_1(
-    x,
-    v,
-    dosage_selection_bias=2,
-    scaling_parameter=10,
-):
-    # Treatment 1
-
-    b = 0.75 * np.dot(x, v[1]) / (np.dot(x, v[2]))
-
-    dosage_selection_bias = 2
-    optimal_dosage = np.dot(x, v[1]) / (2.0 * np.dot(x, v[2]))
-    alpha = dosage_selection_bias
-    dosage = np.array(
-        [np.random.beta(alpha, compute_beta(alpha, elem)) for elem in optimal_dosage]
-    )
-    dosage = np.array(
-        [1 - d if o <= 0.001 else d for (d, o) in zip(dosage, optimal_dosage)]
-    )
-    return dosage
