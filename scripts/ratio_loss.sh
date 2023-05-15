@@ -4,7 +4,15 @@ num_seeds=50
 
 datasets=("ihdp-N" "sim-B" "news-N" "sim-N" "tcga-B")
 flags="--silent --clean --logdir=benchmarks/ratio_loss"
-experiments=("ipw_classifier" "ipw_hybrid" "ipw_ps")
+experiments=("ipw_classifier"
+             "ipw_hybrid"
+             "ipw_ps"
+             "ipw_multips"
+             "ipw_classifier_unmonitored"
+             "ipw_hybrid_unmonitored"
+             "ipw_ps_unmonitored"
+             "ipw_multips_unmonitored")
+
 
 for dset in "${datasets[@]}"
 do
@@ -15,7 +23,7 @@ do
         do
             s=$((num_parallel*i + c))
             if [ $num_gpus -gt 0 ]
-            then 
+            then
                 export CUDA_VISIBLE_DEVICES=$((c % num_gpus))
             else
                 export CUDA_VISIBLE_DEVICES=''
@@ -23,10 +31,10 @@ do
             for exp in "${experiments[@]}"
             do
                 echo "Running dataset: ${dset} seed: $s experiment: ${exp}";
-                python main.py --dataset ${dset} --seed=$s --experiment ${exp} ${flags};
+                # python main.py --dataset ${dset} --seed=$s --experiment ${exp} ${flags};
             done
         done
         wait
     done
 done
-# 
+#

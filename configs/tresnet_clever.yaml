@@ -1,5 +1,5 @@
 ratio_loss: classifier
 tr: true
 clever: true
-estimator: tresnet
+estimator: tr
 best_metric: val/tr
