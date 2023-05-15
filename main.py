@@ -179,7 +179,7 @@ if __name__ == "__main__":
     parser.add_argument("--backbone", default="vc", type=str, choices=backbones)
     glms_ = ("gaussian", "poisson", "bernoulli")
     parser.add_argument("--glm_family", default="gaussian", type=str, choices=glms_)
-    rlosses = ("ps", "hybrid", "classifier")
+    rlosses = ("ps", "hybrid", "classifier", "multips")
     parser.add_argument("--ratio_loss", default="classifier", type=str, choices=rlosses)
     parser.add_argument("--label_smoothing", default=0.1, type=float)
     parser.add_argument("--tr", default=False, action="store_true")
