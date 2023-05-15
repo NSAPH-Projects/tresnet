@@ -103,38 +103,44 @@ def main(args: argparse.Namespace) -> None:
         version="" if args.clean else None,
         default_hp_metric=False,
     )
-    csv_logger = CSVLogger(
-        save_dir=".",
-        name=tb_logger.log_dir,
-        flush_logs_every_n_steps=min(100, args.epochs),
-        version="",
-    )
+    loggers = [tb_logger]
+    if args.csv_logger:
+        csv_logger = CSVLogger(
+            save_dir=".",
+            name=tb_logger.log_dir,
+            flush_logs_every_n_steps=min(100, args.epochs),
+            version="",
+        )
+        loggers.append(csv_logger)
 
     # configure best model checkpointing
-    checkpoint_callback = pl.callbacks.ModelCheckpoint(
-        monitor=args.best_metric,
-        mode="min",
-        save_top_k=1,
-        dirpath=tb_logger.log_dir,
-        every_n_epochs=10,
-        filename="best",
-    )
+    callbacks = []
+    if args.best_metric is not None:
+        checkpoint_callback = pl.callbacks.ModelCheckpoint(
+            monitor=args.best_metric,
+            mode="min",
+            save_top_k=1,
+            dirpath=tb_logger.log_dir,
+            every_n_epochs=10,
+            filename="best",
+        )
+        callbacks.append(checkpoint_callback)
 
     # train model
     trainer = pl.Trainer(
         accelerator="cuda" if torch.cuda.is_available() else "cpu",
         max_epochs=args.epochs,
         gradient_clip_val=1.0,
-        callbacks=[checkpoint_callback],
+        callbacks=callbacks,
         log_every_n_steps=min(100, args.epochs),
         check_val_every_n_epoch=10,
-        logger=[tb_logger, csv_logger],
+        logger=loggers,
         enable_progress_bar=(not args.silent),
     )
     trainer.fit(model, datamodule)
 
     # load best model
-    if args.best_model:
+    if args.best_metric is not None:
         ckpt_path = checkpoint_callback.best_model_path
         model = Tresnet.load_from_checkpoint(ckpt_path)
 
@@ -189,7 +195,7 @@ if __name__ == "__main__":
     parser.add_argument("--tr_type", default="discrete", type=str, choices=tr_types)
     parser.add_argument("--tr_weight_norm", default=False, action="store_true")
     parser.add_argument("--tr_loss_weight", default=20, type=float)
-    parser.add_argument("--lr", default=0.001, type=float)
+    parser.add_argument("--lr", default=4e-3, type=float)
     parser.add_argument("--weight_decay", default=5e-3, type=float)
     parser.add_argument("--dropout", default=0.0, type=float)
     optimizers = ("adam", "sgd")
@@ -200,7 +206,7 @@ if __name__ == "__main__":
     parser.add_argument("--plot_every_n_epochs", default=100, type=int)
     parser.add_argument("--silent", default=False, action="store_true")
     parser.add_argument("--logdir", default="runs", type=str)
-    parser.add_argument("--best_model", default=False, action="store_true")
+    parser.add_argument("--no_csv", dest="csv_logger", default=True, action="store_false")
     parser.add_argument("--best_metric", default=None, type=str)
     estimators = ("ipw", "aipw", "outcome", "tr")
     parser.add_argument("--estimator", default=None, type=str, choices=estimators)
