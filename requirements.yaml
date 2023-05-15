@@ -19,3 +19,4 @@ dependencies:
   - seaborn=0.12.2
   - yaml=0.2.5
   - tqdm=4.65.0
+  - scikit-learn=1.2.2

@@ -12,8 +12,10 @@ import matplotlib.pyplot as plt
 import matplotlib
 
 from tresnet import layers, shifts
+from tresnet import glms
 
 matplotlib.use("Agg")
+
 
 @dataclass
 class TresnetOuputs:
@@ -22,17 +24,6 @@ class TresnetOuputs:
     pred_outcome: Tensor | None = None  # predicted outcome
     features: Tensor | None = None  # hidden features
     fluctuation: Tensor | None = None  # fluctuations
-
-
-def link_and_inverse_link(
-    loss_family: Literal["gaussian", "bernoulli", "poisson"]
-) -> tuple[callable, callable]:
-    if loss_family == "gaussian":
-        return lambda x: x, lambda x: x
-    elif loss_family == "bernoulli":
-        return torch.sigmoid, lambda x: torch.logit(x + 1e-8)
-    elif loss_family == "poisson":
-        return torch.exp, torch.log
 
 
 class OutcomeHead(nn.Module):
@@ -44,11 +35,11 @@ class OutcomeHead(nn.Module):
         config: layers.ModuleConfig,
         vc_spline_degree: int = 2,
         vc_spline_knots: list[float] = [0.33, 0.66],
-        loss_family: Literal["gaussian", "bernoulli", "poisson"] = "gaussian",
+        glm_family: glms.GLMFamily = glms.Gaussian(),
     ) -> None:
         super().__init__()
         self.outcome_type = outcome_type
-        self.loss_family = loss_family
+        self.glm_family = glm_family
         if outcome_type == "vc":
             kwargs = dict(spline_degree=vc_spline_degree, spline_knots=vc_spline_knots)
         elif outcome_type == "mlp":
@@ -76,20 +67,14 @@ class OutcomeHead(nn.Module):
         return_mean_error: bool = False,
     ) -> Tensor:
         # obtain predictor
-        pred = self(treatment, features, detach_bias=detach_intercept) + bias
+        lp = self(treatment, features, detach_bias=detach_intercept) + bias
 
         # because pred is either has either one column for the outcom eloss
         # or n=len(shift_values) columns for the targeted regularization
-        targets = targets[:, None].repeat(1, pred.shape[1])
+        targets = targets[:, None].repeat(1, lp.shape[1])
 
         # eval loss per item
-        if self.loss_family == "gaussian":
-            loss_ = F.mse_loss(pred, targets, reduction="none")
-        elif self.loss_family == "bernoulli":
-            loss_ = F.binary_cross_entropy_with_logits(pred, targets, reduction="none")
-        elif self.loss_family == "poisson":
-            loss_ = F.poisson_nll_loss(pred, targets, log_input=True, reduction="none")
-
+        loss_ = self.glm_family.loss(lp, targets, reduction="none")
         # aggregate
         if weights is not None:
             loss_ *= weights
@@ -98,8 +83,8 @@ class OutcomeHead(nn.Module):
         if not return_mean_error:
             return loss_
         else:
-            link, _ = link_and_inverse_link(self.loss_family)
-            mean_error = (targets - link(pred)).mean()
+            link = self.glm_family.link
+            mean_error = (targets - link(lp)).mean()
             return loss_, mean_error
 
 
@@ -110,7 +95,7 @@ class RatioHead(nn.Module):
         self,
         shift_values: list[float],
         ratio_loss: Literal["ps", "hybrid", "classifier"],
-        shift_type: Literal["percent", "subtract", "cutoff"],
+        shift: shifts.Shift,
         in_dim: int,
         ratio_grid_size: int,
         ratio_spline_degree: int = 2,
@@ -119,10 +104,9 @@ class RatioHead(nn.Module):
     ) -> None:
         super().__init__()
         self.ratio_loss = ratio_loss
-        self.shift_type = shift_type
         self.register_buffer("shift_values", torch.FloatTensor(shift_values))
         self.label_smoothing = label_smoothing
-        self.shift = getattr(shifts, shift_type.capitalize())()
+        self.shift = shift
 
         # validate shift type and ratio type
         if not ratio_loss in ("ps", "hybrid"):
@@ -188,7 +172,7 @@ class RatioHead(nn.Module):
             logits = torch.cat([ratio2, ratio1])
             tgts = torch.cat([torch.zeros_like(ratio2), torch.ones_like(ratio1)])
             tgts = tgts.clamp(self.label_smoothing / 2, 1 - self.label_smoothing / 2)
-            loss_ = 0.5 * F.binary_cross_entropy_with_logits(logits, tgts)
+            loss_ = F.binary_cross_entropy_with_logits(logits, tgts)
 
         return loss_
 
@@ -199,12 +183,12 @@ class Tresnet(pl.LightningModule):
         in_dim: int,
         hidden_dim: int,
         shift_values: list[float],
-        shift_type: Literal["percent", "subtract", "cutoff"] = "percent",
+        shift: shifts.Shift,
         outcome_freeze: bool = False,
         outcome_type: str = Literal["vc", "mlp", "drnet"],
         outcome_spline_degree: int = 2,
         outcome_spline_knots: list[float] = [0.33, 0.66],
-        outcome_family: Literal["gaussian", "bernoulli", "poisson"] = "gaussian",
+        glm_family: glms.GLMFamily = glms.Gaussian(),
         ratio_freeze: bool = False,
         ratio_loss: Literal["ps", "hybrid", "classifier"] = "ps",
         ratio_spline_degree: int = 2,
@@ -224,16 +208,16 @@ class Tresnet(pl.LightningModule):
         opt_weight_decay: float = 5e-3,
         opt_optimizer: Literal["adam", "sgd"] = "adam",
         dropout: float = 0.0,
-        true_train_srf: Tensor | None = None,
+        true_srf_train: Tensor | None = None,
         true_srf_val: Tensor | None = None,
         plot_every_n_epochs: int = 100,
-        estimator: None | Literal['ipw', 'aipw', 'outcome', 'tr'] = None
+        estimator: None | Literal["ipw", "aipw", "outcome", "tr"] = None,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
         self.register_buffer("shift_values", torch.FloatTensor(shift_values))
         self.outcome_freeze = outcome_freeze
-        self.outcome_family = outcome_family
+        self.glm_family = glm_family
         self.ratio_freeze = ratio_freeze
         self.ratio_loss_weight = ratio_loss_weight
         self.tr = tr
@@ -244,9 +228,9 @@ class Tresnet(pl.LightningModule):
         self.optimizer = opt_optimizer
         self.lr = opt_lr
         self.wd = opt_weight_decay
-        self.register_buffer("true_train_srf", true_train_srf)
+        self.register_buffer("true_srf_train", true_srf_train)
         self.register_buffer("true_srf_val", true_srf_val)
-        self.shift = getattr(shifts, shift_type.capitalize())()
+        self.shift = shift
         self.plot_every_n_epochs = plot_every_n_epochs
         self.estimator = estimator
 
@@ -265,7 +249,7 @@ class Tresnet(pl.LightningModule):
 
         # make outcome model
         outcome_config = layers.ModuleConfig(
-            layers.LayerConfig(hidden_dim, hidden_dim, True, **lkwargs),
+            # layers.LayerConfig(hidden_dim, hidden_dim, True, **lkwargs),
             layers.LayerConfig(hidden_dim, 1, False, act=None),
         )
         self.outcome = OutcomeHead(
@@ -273,14 +257,14 @@ class Tresnet(pl.LightningModule):
             config=outcome_config,
             vc_spline_degree=outcome_spline_degree,
             vc_spline_knots=outcome_spline_knots,
-            loss_family=outcome_family,
+            glm_family=glm_family,
         )
 
         # make ratio model
         self.ratio = RatioHead(
             shift_values=shift_values,
             ratio_loss=ratio_loss,
-            shift_type=shift_type,
+            shift=shift,
             in_dim=hidden_dim,
             ratio_grid_size=ratio_grid_size,
             ratio_spline_degree=ratio_spline_degree,
@@ -300,7 +284,9 @@ class Tresnet(pl.LightningModule):
         for part in ["train", "val"]:
             for name in self.estimator_names:
                 self.register_buffer(f"{name}_{part}", torch.zeros(len(shift_values)))
-            self.register_buffer(f"srf_estimator_{part}", torch.zeros(len(shift_values)))
+            self.register_buffer(
+                f"srf_estimator_{part}", torch.zeros(len(shift_values))
+            )
 
         # freeze models if necessary
         if self.outcome_freeze:
@@ -366,6 +352,9 @@ class Tresnet(pl.LightningModule):
         if self.ratio_freeze:
             losses["ratio"] = losses["ratio"].detach()
 
+        # combine ratio and outcome
+        losses["ratio_outcome"] = losses["ratio"] + losses["outcome"]
+
         # 3. tr loss
         fluct = self.fluct_param().unsqueeze(0)
 
@@ -376,14 +365,13 @@ class Tresnet(pl.LightningModule):
 
         if self.tr_clever:
             fluct = w * fluct
-            w = None
 
         losses["tr"], losses["tr_mean_error"] = self.outcome.loss(
             treatment=treatment,
             features=features,
             targets=outcome,
             bias=fluct,
-            weights=w,
+            weights=w if not self.tr_clever else None,
             detach_intercept=True,
             return_mean_error=True,
         )
@@ -397,16 +385,18 @@ class Tresnet(pl.LightningModule):
             srf_ipw = torch.zeros_like(self.shift_values)
             srf_aipw = torch.zeros_like(self.shift_values)
 
-            srf_adj = fluct.mean(0)
+            srf_adj = fluct
             shifted = self.shift(treatment[:, None], self.shift_values[None, :])
 
+            link = self.glm_family.link
+            invlink = self.glm_family.inverse_link
+            pred_obs = link(self.outcome(treatment, features).squeeze(1))
             for i in range(len(self.shift_values)):
-                link, invlink = link_and_inverse_link(self.outcome_family)
                 pred = link(self.outcome(shifted[:, i], features).squeeze(1))
-                srf_tr[i] = link(invlink(pred) + srf_adj[i]).mean()
+                srf_tr[i] = link(invlink(pred) + srf_adj[:, i]).mean()
                 srf_outcome[i] = pred.mean()
                 srf_ipw[i] = (outcome * w[:, i]).mean() / w[:, i].mean()
-                srf_aipw[i] = (w[:, i] * (outcome - pred) + pred).mean()
+                srf_aipw[i] = (w[:, i] * (outcome - pred_obs) + pred).mean()
 
             estimators["srf_tr"] = srf_tr
             estimators["srf_outcome"] = srf_outcome

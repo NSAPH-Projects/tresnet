@@ -2,3 +2,4 @@ ratio_loss: classifier
 tr: true
 clever: true
 estimator: tresnet
+best_metric: val/tr

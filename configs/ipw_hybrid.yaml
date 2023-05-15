@@ -1,3 +1,4 @@
 outcome_freeze: true
 ratio_loss: hybrid
 estimator: ipw
+best_metric: val/ratio
