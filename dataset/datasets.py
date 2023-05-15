@@ -21,7 +21,9 @@ DATASETS = (
     "news-N",  # News modification in VCNet (Nie et al., 2021)
     "sim-B",  # Simulated data in SCIGAN (Bica et al., 2020)
     "news-B",  # News modification in SCIGAN (Bica et al., 2020)
-    "tcga-B",  # TCGA modification in SCIGAN (Bica et al., 2020)
+    "tcga-B1",  # TCGA modification in SCIGAN (Bica et al., 2020)
+    "tcga-B2",  # TCGA modification in SCIGAN (Bica et al., 2020)
+    "tcga-B3",  # TCGA modification in SCIGAN (Bica et al., 2020)
     "sim-T",  # Simulated data in E2B (Taha Bahadori et al., 2022)
     "medisynth",  # FRrom fitting to the Medicare example
 )
@@ -50,6 +52,21 @@ DATASETS = (
 #             "outcome": sample[-1],
 #         }
 
+def normalize_tcga_data(patient_features):
+    x = (patient_features - np.min(patient_features, axis=0)) / (
+        np.max(patient_features, axis=0) - np.min(patient_features, axis=0)
+    )
+    for i in range(x.shape[0]):
+        x[i] = x[i] / np.linalg.norm(x[i])
+    return x
+        
+def compute_tcga_beta(alpha, optimal_dosage):
+    if optimal_dosage <= 0.001 or optimal_dosage >= 1.0:
+        beta = 1.0
+    else:
+        beta = (alpha - 1.0) / float(optimal_dosage) + (2.0 - alpha)
+
+    return beta
 
 def get_iter(data_matrix, batch_size, **kwargs):
     # dataset = DatasetFromMatrix(data_matrix)
@@ -236,76 +253,14 @@ def load_data(
 
         return D
 
-    elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
-        # Utility functions
-
-        def normalize_data(patient_features):
-            x = (patient_features - np.min(patient_features, axis=0)) / (
-                np.max(patient_features, axis=0) - np.min(patient_features, axis=0)
-            )
-            for i in range(x.shape[0]):
-                x[i] = x[i] / np.linalg.norm(x[i])
-            return x
-        
-        def compute_beta(alpha, optimal_dosage):
-            if optimal_dosage <= 0.001 or optimal_dosage >= 1.0:
-                beta = 1.0
-            else:
-                beta = (alpha - 1.0) / float(optimal_dosage) + (2.0 - alpha)
-
-            return beta
-
-        def generate_dosage_treatment_3(
-            x,
-            v,
-            dosage_selection_bias=2,
-            scaling_parameter=10,
-        ):
-
-            # Treatment 3
-
-            b = 0.75 * np.dot(x, v[1]) / (np.dot(x, v[2]))
-
-            optimal_dosage = np.array(
-                [elem / 3.0 if elem >= 0.75 else 1.0 for elem in b]
-            )
-
-            alpha = dosage_selection_bias
-
-            dosage = np.array(
-                [
-                    np.random.beta(alpha, compute_beta(alpha, elem))
-                    for elem in optimal_dosage
-                ]
-            )
-            return dosage
-        
-        def generate_dosage_treatment_1(
-            x,
-            v,
-            dosage_selection_bias=2,
-            scaling_parameter=10,
-        ):
-
-            # Treatment 1
-
-            b = 0.75 * np.dot(x, v[1]) / (np.dot(x, v[2]))
-
-            dosage_selection_bias = 2
-            optimal_dosage = np.dot(x, v[1]) / (2.0 * np.dot(x, v[2]))
-            alpha = dosage_selection_bias
-            dosage = np.array([np.random.beta(alpha, compute_beta(alpha, elem)) for elem in optimal_dosage])
-            dosage = np.array([1 - d if o <= 0.001 else d for (d, o) in zip(dosage, optimal_dosage)])
-            return dosage
-
-        # Create load data and create treatment
+    elif dataset in set(["tcga-B1", "tcga-B2", "tcga-B3"]):
 
         with open("dataset/tcga/tcga.p", "rb") as f:
             import pickle
 
             tcga_data = pickle.load(f)
 
-        patients = normalize_data(tcga_data["rnaseq"])
+        patients = normalize_tcga_data(tcga_data["rnaseq"])
 
         # 9659 patients with 4000 features describing them each.
 
@@ -316,28 +271,134 @@ def load_data(
         for col in range(V.shape[1]):
             V[:, col] = V[:, col] / np.linalg.norm(V[:, col], ord=1)
 
-        dosages = generate_dosage_treatment_1(patients, V)  # generate dosages
-
 
         idx_list = torch.randperm(patients.shape[0])
-        train_ix = idx_list[0 : int(len(idx_list) * 0.8)]
+        train_ix = idx_list[0 : int(len(idx_list) * 0.8)] 
         test_ix = idx_list[int(len(idx_list) * 0.8) :]
-        D = {
-            "x": torch.tensor(patients, dtype=torch.float32),
-            "t": torch.tensor(dosages, dtype=torch.float32),
-            "train_ix": train_ix,
-            "test_ix": test_ix,
-            "V": V,
-        }
 
-        # D = {
-        #    "x": torch.FloatTensor(tcga_data["x"]),
-        #    "t": torch.FloatTensor(tcga_data["t"]),
-        #    "train_ix": torch.LongTensor(tcga_data["train_idx"]),
-        #    "test_ix": torch.LongTensor(tcga_data["test_idx"]),
-        #    "y": torch.FloatTensor(tcga_data["y"]),
-        # }
-        return D
+        if dataset == "tcga-B1":  # TCGA modification in SCIGAN (Bica et al., 2020)
+            # Utility functions
+
+
+            def generate_dosage_treatment(
+                x,
+                v,
+                dosage_selection_bias=2,
+                scaling_parameter=10,
+            ):
+
+                # Treatment 1
+
+                b = 0.75 * np.dot(x, v[1]) / (np.dot(x, v[2]))
+
+                dosage_selection_bias = 2
+                optimal_dosage = np.dot(x, v[1]) / (2.0 * np.dot(x, v[2]))
+                alpha = dosage_selection_bias
+                dosage = np.array([np.random.beta(alpha, compute_tcga_beta(alpha, elem)) for elem in optimal_dosage])
+                dosage = np.array([1 - d if o <= 0.001 else d for (d, o) in zip(dosage, optimal_dosage)])
+                return dosage
+
+            # Create load data and create treatment
+
+
+            dosages = generate_dosage_treatment(patients, V)  # generate dosages
+
+
+            
+            D = {
+                "x": torch.tensor(patients, dtype=torch.float32),
+                "t": torch.tensor(dosages, dtype=torch.float32),
+                "train_ix": train_ix,
+                "test_ix": test_ix,
+                "V": V,
+            }
+
+            # D = {
+            #    "x": torch.FloatTensor(tcga_data["x"]),
+            #    "t": torch.FloatTensor(tcga_data["t"]),
+            #    "train_ix": torch.LongTensor(tcga_data["train_idx"]),
+            #    "test_ix": torch.LongTensor(tcga_data["test_idx"]),
+            #    "y": torch.FloatTensor(tcga_data["y"]),
+            # }
+            return D
+
+        elif dataset == "tcga-B2":
+
+            def generate_dosage_treatment(
+                x,
+                v,
+                dosage_selection_bias=2,
+                scaling_parameter=10,
+                ):
+
+                optimal_dosage = np.dot(x, v[1]) / (2.0 * np.dot(x, v[2]))
+                alpha = dosage_selection_bias
+                #dosage = np.random.beta(alpha, compute_beta(alpha, optimal_dosage))
+                dosage = np.array([np.random.beta(alpha, compute_tcga_beta(alpha, elem)) for elem in optimal_dosage])
+                dosage = np.array([1 - d if o <= 0.001 else d for (d, o) in zip(dosage, optimal_dosage)])
+                
+                return dosage 
+            
+            dosages = generate_dosage_treatment(patients, V)
+
+            D = {
+                "x": torch.tensor(patients, dtype=torch.float32),
+                "t": torch.tensor(dosages, dtype=torch.float32),
+                "train_ix": train_ix,
+                "test_ix": test_ix,
+                "V": V,
+            }
+            return D
+            
+        elif dataset == "tcga-B3":
+
+            def generate_dosage_treatment(
+                x,
+                v,
+                dosage_selection_bias=2,
+                scaling_parameter=10,
+            ):
+
+                # Treatment 3
+
+                b = 0.75 * np.dot(x, v[1]) / (np.dot(x, v[2]))
+
+                optimal_dosage = np.array(
+                    [elem / 3.0 if elem >= 0.75 else 1.0 for elem in b]
+                )
+
+                alpha = dosage_selection_bias
+
+                dosage = np.array(
+                    [
+                        np.random.beta(alpha, compute_tcga_beta(alpha, elem))
+                        for elem in optimal_dosage
+                    ]
+                )
+                return dosage
+
+            dosages = generate_dosage_treatment(patients, V)
+
+            D = {
+                "x": torch.tensor(patients, dtype=torch.float32),
+                "t": torch.tensor(dosages, dtype=torch.float32),
+                "train_ix": train_ix,
+                "test_ix": test_ix,
+                "V": V,
+            }
+
+            # D = {
+            #    "x": torch.FloatTensor(tcga_data["x"]),
+            #    "t": torch.FloatTensor(tcga_data["t"]),
+            #    "train_ix": torch.LongTensor(tcga_data["train_idx"]),
+            #    "test_ix": torch.LongTensor(tcga_data["test_idx"]),
+            #    "y": torch.FloatTensor(tcga_data["y"]),
+            # }
+            return D
+            
+
+        
+
 
     elif dataset == "news-B":  # News modification in SCIGAN (Bica et al., 2020)
         raise NotImplementedError
@@ -483,12 +544,36 @@ def outcome(
         y = res + noise
         return y, noise
 
-    elif dataset == "tcga-B":  # TCGA modification in SCIGAN (Bica et al., 2020)
+    elif dataset == "tcga-B1":  # TCGA modification in SCIGAN (Bica et al., 2020)
         V = D["V"]
         x = x.numpy()
         t = t.numpy()
 
-        y = 10 * (np.dot(V[0], x.T) + (np.dot((12.0 * V[1]), x.T) *  t) - (np.dot((12.0 * V[1]), x.T) *  (t ** 2)))
+        y = 10 * (np.dot(V[0], x.T) + (np.dot((12.0 * V[1]), x.T) *  t) - (np.dot((12.0 * V[2]), x.T) *  (t ** 2)))
+
+        noise = np.random.normal(0, 0.2, size = len(y))
+        y = y + noise
+        return torch.tensor(y, dtype=torch.float32), torch.tensor(noise, dtype=torch.float32)
+    
+    elif dataset == "tcga-B2":
+
+        V = D["V"]
+        x = x.numpy()
+        t = t.numpy()
+
+        y = 10.0 * ((np.dot(x, V[0])) + (np.sin(np.pi * (np.dot(x, V[1]) / np.dot(x, V[2])) * t)))
+
+        noise = np.random.normal(0, 0.2, size = len(y))
+        y = y + noise
+        return torch.tensor(y, dtype=torch.float32), torch.tensor(noise, dtype=torch.float32)
+
+    elif dataset == "tcga-B3":
+
+        V = D["V"]
+        x = x.numpy()
+        t = t.numpy()
+
+        y = 10.0 * ((np.dot(x, V[0])) + (12.0 * t * ((t - (0.75 * (np.dot(x, V[1]) / np.dot(x, V[2]))) ** 2))))
 
         noise = np.random.normal(0, 0.2, size = len(y))
         y = y + noise

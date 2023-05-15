@@ -10,7 +10,7 @@ seed_offset=0 # $num_seeds
 # seed_offset=0 # $num_seeds
 
 #datasets=("ihdp-N" "sim-B" "news-N" "sim-N")
-datasets=("tcga-B")
+datasets=("tcga-B3")
 #datasets=("sim-B")
 # datasets=("ihdp-N" "news-N" "sim-N")
 # datasets=("medisynth")
