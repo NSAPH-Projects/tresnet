@@ -1,3 +1,4 @@
 ratio_loss: classifier
 tr: false
 estimator: aipw
+best_metric: val/ratio_outcome

@@ -1,6 +1,7 @@
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 
 import random
+from typing import Callable
 import torch
 import torch.nn.functional as F
 from torch import Tensor, Generator
@@ -21,12 +22,14 @@ class GLMFamily(ABC):
         pass
 
     @abstractmethod
-    def loss(self, linear_predictor: Tensor, target: Tensor) -> Tensor:
+    def loss(
+        self, linear_predictor: Tensor, target: Tensor, reduction: str = "none"
+    ) -> Tensor:
         """Loss function that describes the error model"""
         pass
 
-    @abstractproperty
-    def sampler(self, generator: Generator, **kwargs) -> callable[[Tensor], Tensor]:
+    @abstractmethod
+    def sampler(self, generator: Generator, **kwargs) -> Callable[[Tensor], Tensor]:
         """Function that samples from the error model. Must follow the same logidc
         as torch sampling functions. See torch.normal for an example."""
         pass
@@ -66,27 +69,31 @@ class Gaussian(GLMFamily):
     def inverse_link(self, x: Tensor) -> Tensor:
         return x
 
-    def loss(self, linear_predictor: Tensor, target: Tensor) -> Tensor:
-        return F.mse_loss(linear_predictor, target, reduction="none")
+    def loss(
+        self, linear_predictor: Tensor, target: Tensor, reduction: str = "none"
+    ) -> Tensor:
+        return F.mse_loss(linear_predictor, target, reduction=reduction)
 
-    @property
     def sampler(self, generator: torch.Generator, noise_scale: float = 1.0) -> callable:
         return lambda lp: torch.normal(lp, noise_scale, generator=generator)
 
 
-class Benoulli(GLMFamily):
+class Bernoulli(GLMFamily):
     """Bernoulli error model"""
 
     def link(self, x: Tensor) -> Tensor:
         return torch.sigmoid(x)
 
     def inverse_link(self, x: Tensor) -> Tensor:
-        return torch.logit(x + 1e-8)
+        return torch.logit(x.clamp(1e-6, 1 - 1e-6))
 
-    def loss(self, linear_predictor: Tensor, target: Tensor) -> Tensor:
-        return F.binary_cross_entropy_with_logits(linear_predictor, target)
+    def loss(
+        self, linear_predictor: Tensor, target: Tensor, reduction: str = "none"
+    ) -> Tensor:
+        return F.binary_cross_entropy_with_logits(
+            linear_predictor, target, reduction=reduction
+        )
 
-    @property
     def sampler(self, generator: torch.Generator) -> callable:
         return lambda lp: torch.bernoulli(torch.sigmoid(lp))
 
@@ -95,14 +102,24 @@ class Poisson(GLMFamily):
     """Poisson error model"""
 
     def link(self, x: Tensor) -> Tensor:
+        # # pass x through a symlog
+        # sml = torch.sign(x) * torch.log1p(torch.abs(0.1 * x))
+        # return torch.exp(sml)
         return torch.exp(x)
 
     def inverse_link(self, x: Tensor) -> Tensor:
-        return torch.log(x)
+        # y = torch.log(x + 1e-6)
+        # # revert symlog from link
+        # return torch.sign(y) * (torch.exp(torch.abs(y)) - 1) / 0.1
+        return torch.log(x + 1e-6)
+    
 
-    def loss(self, linear_predictor: Tensor, target: Tensor) -> Tensor:
-        return F.poisson_nll_loss(linear_predictor, target, log_input=True, full=False)
+    def loss(
+        self, linear_predictor: Tensor, target: Tensor, reduction: str = "none"
+    ) -> Tensor:
+        return F.poisson_nll_loss(
+            linear_predictor, target, log_input=True, reduction=reduction
+        )
 
-    @property
     def sampler(self, generator: torch.Generator) -> callable:
-        return lambda lp: torch.poisson(torch.exp(lp.clamp(-20.0, 20.0)))
+        return lambda lp: torch.poisson(torch.exp(lp))

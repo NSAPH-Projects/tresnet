@@ -1,3 +1,4 @@
 outcome_freeze: true
 ratio_loss: classifier
 estimator: ipw
+best_metric: val/ratio
