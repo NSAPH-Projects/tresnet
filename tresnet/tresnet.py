@@ -311,7 +311,13 @@ class Tresnet(pl.LightningModule):
             self.tr_model = layers.SplineFluctuation(tr_spline_degree, tr_spline_knots)
 
         # holders for some of the estimators of SRFs
-        self.estimator_names = ["srf_tr", "srf_outcome", "srf_ipw", "srf_aipw"]
+        self.estimator_names = [
+            "srf_tr",
+            "srf_outcome",
+            "srf_ipw",
+            "srf_aipw",
+            "srf_tr_aipw",
+        ]
         self.estimators_batches = defaultdict(list)  # remember to clear on epoch end
         for part in ["train", "val"]:
             for name in self.estimator_names:
@@ -416,19 +422,23 @@ class Tresnet(pl.LightningModule):
             srf_outcome = torch.zeros_like(self.shift_values)
             srf_ipw = torch.zeros_like(self.shift_values)
             srf_aipw = torch.zeros_like(self.shift_values)
+            srf_tr_aipw = torch.zeros_like(self.shift_values)
 
             srf_adj = fluct
             shifted = self.shift(treatment[:, None], self.shift_values[None, :])
 
             link = self.glm_family.link
-            invlink = self.glm_family.inverse_link
+            # invlink = self.glm_family.inverse_link
             pred_obs = link(self.outcome(treatment, features).squeeze(1))
+            adj_obs = link(self.outcome(treatment, features, bias=srf_adj).squeeze(1))
             for i in range(len(self.shift_values)):
-                pred = link(self.outcome(shifted[:, i], features).squeeze(1))
-                srf_tr[i] = link(invlink(pred) + srf_adj[:, i]).mean()
-                srf_outcome[i] = pred.mean()
+                pred_i = link(self.outcome(shifted[:, i], features))
+                srf_tr[i] = adj_i.mean()
+                adj_i = link(self.outcome(shifted[:, i], features, bias=srf_adj[:, i]))
+                srf_outcome[i] = pred_i.mean()
                 srf_ipw[i] = (outcome * w[:, i]).mean() / w[:, i].mean()
-                srf_aipw[i] = (w[:, i] * (outcome - pred_obs) + pred).mean()
+                srf_aipw[i] = w[:, i] * (outcome - pred_obs) + srf_outcome[i]
+                srf_tr_aipw[i] = w[:, i] * (outcome - adj_obs) + srf_tr[i]
 
             estimators["srf_tr"] = srf_tr
             estimators["srf_outcome"] = srf_outcome
