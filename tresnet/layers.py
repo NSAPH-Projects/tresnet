@@ -256,7 +256,7 @@ class SplineFluctuation(nn.Module):
         self.upper = upper
 
         # init weight
-        nn.init.xavier_uniform_(self.weight)
+        nn.init.trunc_normal_(self.weight)
 
     def forward(self, input: Tensor) -> Tensor:
         input = (input - self.lower) / (self.upper - self.lower)

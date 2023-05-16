@@ -281,7 +281,7 @@ class Tresnet(pl.LightningModule):
 
         # make outcome model
         outcome_config = layers.ModuleConfig(
-            # layers.LayerConfig(hidden_dim, hidden_dim, True, **lkwargs),
+            layers.LayerConfig(hidden_dim, hidden_dim, True, **lkwargs),
             layers.LayerConfig(hidden_dim, 1, False, act=None),
         )
         self.outcome = OutcomeHead(
@@ -524,7 +524,10 @@ class Tresnet(pl.LightningModule):
         intercept = self.outcome.intercept
         param_groups.append(dict(params=[intercept], weight_decay=0.0))
 
-        param_groups.append(dict(params=[self.tr_model], weight_decay=0.0))
+        if self.tr_param_type == "discrete":
+            param_groups.append(dict(params=[self.tr_model], weight_decay=0.0))
+        elif self.tr_param_type == "spline":
+            param_groups.append(dict(params=self.tr_model.parameters(), weight_decay=0.0))
 
         if self.optimizer == "adam":
             optimizer = torch.optim.Adam(param_groups, lr=self.lr)

@@ -1,0 +1,6 @@
+ratio_loss: classifier
+tr: true
+clever: true
+estimator: tr
+best_metric: val/tr
+tr_type: spline
