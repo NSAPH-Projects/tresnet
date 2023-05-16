@@ -243,7 +243,7 @@ class Tresnet(pl.LightningModule):
         true_srf_train: Tensor | None = None,
         true_srf_val: Tensor | None = None,
         plot_every_n_epochs: int = 100,
-        estimator: None | Literal["ipw", "aipw", "outcome", "tr"] = None,
+        estimator: None | Literal["ipw", "aipw", "outcome", "tr", "tr_aipw"] = None,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -428,22 +428,25 @@ class Tresnet(pl.LightningModule):
             shifted = self.shift(treatment[:, None], self.shift_values[None, :])
 
             link = self.glm_family.link
-            # invlink = self.glm_family.inverse_link
+            invlink = self.glm_family.inverse_link
             pred_obs = link(self.outcome(treatment, features).squeeze(1))
-            adj_obs = link(self.outcome(treatment, features, bias=srf_adj).squeeze(1))
+
+            w = w / w.mean(0, keepdim=True) # stabilize weights
             for i in range(len(self.shift_values)):
-                pred_i = link(self.outcome(shifted[:, i], features))
-                srf_tr[i] = adj_i.mean()
-                adj_i = link(self.outcome(shifted[:, i], features, bias=srf_adj[:, i]))
+                srf_ipw[i] = (outcome * w[:, i]).mean() 
+                pred_i = link(self.outcome(shifted[:, i], features)).squeeze(1)
                 srf_outcome[i] = pred_i.mean()
-                srf_ipw[i] = (outcome * w[:, i]).mean() / w[:, i].mean()
-                srf_aipw[i] = w[:, i] * (outcome - pred_obs) + srf_outcome[i]
-                srf_tr_aipw[i] = w[:, i] * (outcome - adj_obs) + srf_tr[i]
+                adj_i = link(invlink(pred_i) +  srf_adj[:, i])
+                adj_obs = link(invlink(pred_obs) + srf_adj[:, i])
+                srf_tr[i] = adj_i.mean()
+                srf_aipw[i] = (w[:, i] * (outcome - pred_obs)).mean() + srf_outcome[i]
+                srf_tr_aipw[i] = (w[:, i] * (outcome - adj_obs)).mean() + srf_tr[i]
 
             estimators["srf_tr"] = srf_tr
             estimators["srf_outcome"] = srf_outcome
             estimators["srf_ipw"] = srf_ipw
             estimators["srf_aipw"] = srf_aipw
+            estimators["srf_tr_aipw"] = srf_tr_aipw
 
         return losses, estimators
 

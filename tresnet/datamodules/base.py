@@ -72,9 +72,10 @@ class TresnetDataModule(pl.LightningDataModule):
         # generated_seed will be used for counterfactuals to ensure
         # exogenous noise is the same in a counterfactual curve
         lp = self.linear_predictor(covariates, t)
-        if self.normalize_outcome:
-            lp_mean, lp_sig = lp.mean(), lp.std()
-            lp = (lp - lp_mean) / lp_sig
+        if self.normalize_outcome:  # in (-5, 5)
+            lp_min = lp.min()
+            lp_max = lp.max()
+            lp = 10 * (lp - lp_min) / (lp_max - lp_min) - 5
 
         generator_seed = random.randint(0, 2**32 - 1)
         sampler = self.family.sample_from_linear_predictor
@@ -83,7 +84,9 @@ class TresnetDataModule(pl.LightningDataModule):
         # counterfactuals
         lp_shifted = [self.linear_predictor(covariates, s) for s in shifted]
         if self.normalize_outcome:
-            lp_shifted = [(l - lp_mean) / lp_sig for l in lp_shifted]
+            lp_shifted = [
+                10 * (L - lp_min) / (lp_max - lp_min) - 5 for L in lp_shifted
+            ]
 
         counterfacutals = [
             sampler(mu, seed=generator_seed, **self.sampler_opts) for mu in lp_shifted
