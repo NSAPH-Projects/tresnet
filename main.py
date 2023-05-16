@@ -9,8 +9,11 @@ import torch.nn as nn
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger
 import yaml
+import logging
 
 from tresnet import datamodules, shifts, glms, Tresnet
+
+logger = logging.getLogger(__name__)
 
 
 def main(args: argparse.Namespace) -> None:
@@ -93,8 +96,13 @@ def main(args: argparse.Namespace) -> None:
     logdir = f"logs/{args.logdir}/{args.dataset}/{args.glm_family}/{args.seed:06d}"
     if args.experiment is not None:
         logdir += f"/{args.experiment}"
+        has_solution = os.path.exists(f"{logdir}/srf_estimates.csv")
         if args.clean and os.path.exists(logdir):
-            shutil.rmtree(logdir)
+            if not has_solution or args.overwrite:
+                shutil.rmtree(logdir)
+            else:
+                logging.warning(f"Skipping {logdir} because it has a solution")
+                return  # do nothing
 
     # configure loggers
     tb_logger = TensorBoardLogger(
@@ -145,6 +153,7 @@ def main(args: argparse.Namespace) -> None:
         model = Tresnet.load_from_checkpoint(ckpt_path)
 
     # retrieve and safe last srf estimate
+    # TODO return shift values
     estimates = dict(
         train_srf=model.srf_estimator_train.detach().cpu().numpy(),
         test_srf=model.srf_estimator_val.detach().cpu().numpy(),
@@ -195,7 +204,7 @@ if __name__ == "__main__":
     parser.add_argument("--tr_type", default="discrete", type=str, choices=tr_types)
     parser.add_argument("--tr_weight_norm", default=False, action="store_true")
     parser.add_argument("--tr_loss_weight", default=20, type=float)
-    parser.add_argument("--lr", default=4e-3, type=float)
+    parser.add_argument("--lr", default=3e-4, type=float)
     parser.add_argument("--weight_decay", default=5e-3, type=float)
     parser.add_argument("--dropout", default=0.0, type=float)
     optimizers = ("adam", "sgd")
@@ -206,12 +215,16 @@ if __name__ == "__main__":
     parser.add_argument("--plot_every_n_epochs", default=100, type=int)
     parser.add_argument("--silent", default=False, action="store_true")
     parser.add_argument("--logdir", default="runs", type=str)
-    parser.add_argument("--no_csv", dest="csv_logger", default=True, action="store_false")
+    parser.add_argument(
+        "--no_csv", dest="csv_logger", default=True, action="store_false"
+    )
     parser.add_argument("--best_metric", default=None, type=str)
     estimators = ("ipw", "aipw", "outcome", "tr")
     parser.add_argument("--estimator", default=None, type=str, choices=estimators)
     parser.add_argument("--experiment", default=None, type=str)
     parser.add_argument("--clean", default=False, action="store_true")
+    parser.add_argument("--overwrite", default=False, action="store_true")
+    parser.add_argument("--unmonitor", default=False, action="store_true")
 
     args = parser.parse_args()
 
@@ -221,5 +234,8 @@ if __name__ == "__main__":
             config = yaml.load(f, Loader=yaml.SafeLoader)
         for k, v in config.items():
             setattr(args, k, v)
+
+    if args.unmonitor:  # overwrite config file
+        args.best_metric = None
 
     main(args)

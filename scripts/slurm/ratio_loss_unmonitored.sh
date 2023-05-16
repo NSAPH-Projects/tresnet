@@ -1,10 +1,10 @@
 #!/bin/bash
 
-#SBATCH --job-name=ratio_loss
-#SBATCH --output=logs/slurm/ratio_loss_%A_%a.out
-#SBATCH --error=logs/slurm/ratio_loss_%A_%a.err
-#SBATCH --array=0-50%25
-#SBATCH --time=1:00:00
+#SBATCH --job-name=rlun
+#SBATCH --output=logs/slurm/rlun_%A_%a.out
+#SBATCH --error=logs/slurm/rlun%A_%a.err
+#SBATCH --array=0-30%15
+#SBATCH --time=8:00:00
 #SBATCH --partition=serial_requeue
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -14,14 +14,13 @@
 # mkdir -p logs/slurm run this command before sbatch to create the
 # log directory or else sbatch will fail
 
-flags="--silent --clean --logdir=benchmarks/ratio_loss_full --no_csv"
+soff=0  # seed offset for additional experiments
+flags="--silent --clean --logdir=benchmarks/ratio_loss_unmonitored --unmonitor --no_csv"
 datasets=("ihdp" "news" "simB" "simN" "tcga-1" "tcga-2" "tcga-3")
 experiments=("ipw_classifier"
              "ipw_hybrid"
              "ipw_ps"
-             "ipw_multips"
-             "ipw_classifier_unmonitored"
-             "ipw_ps_unmonitored")
+             "ipw_multips")
 families=("gaussian" "bernoulli" "poisson")
 
 for dset in "${datasets[@]}"
@@ -30,8 +29,9 @@ do
     do
         for fam in "${families[@]}"
         do
-            echo "Running dataset: ${dset} seed: $SLURM_ARRAY_TASK_ID experiment: ${exp} family: ${fam}";
-            python main.py --dataset ${dset} --seed=$SLURM_ARRAY_TASK_ID --experiment ${exp} --glm_family ${fam} ${flags};
+            seed=$((SLURM_ARRAY_TASK_ID + soff))
+            echo "Running dataset: ${dset} seed: ${seed} experiment: ${exp} family: ${fam}";
+            python main.py --dataset ${dset} --seed=${seed} --experiment ${exp} --glm_family ${fam} ${flags};
         done
     done
 done

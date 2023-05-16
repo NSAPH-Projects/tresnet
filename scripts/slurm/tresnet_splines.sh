@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#SBATCH --job-name=tresnet
-#SBATCH --output=logs/slurm/tresnet_%A_%a.out
-#SBATCH --error=logs/slurm/tresnet_%A_%a.err
+#SBATCH --job-name=tressplines
+#SBATCH --output=logs/slurm/tressplines_%A_%a.out
+#SBATCH --error=logs/slurm/tressplinest_%A_%a.err
 #SBATCH --array=0-30%15
 #SBATCH --time=8:00:00
 #SBATCH --partition=serial_requeue
@@ -13,9 +13,9 @@
 
 
 soff=0  # seed offset for additional experiments
-flags="--silent --clean --logdir=benchmarks/tresnet --no_csv"
+flags="--silent --clean --logdir=benchmarks/tresnet_splines --no_csv"
 datasets=("ihdp" "news" "simB" "simN" "tcga-1" "tcga-2" "tcga-3")
-experiments=("aipw" "tresnet" "outcome" "ipw_classifier" "tresnet_clever")
+experiments=("tresnet" "treset_splines" "tresnet_clever" "tresnet_clever_splines")
 families=("gaussian" "bernoulli" "poisson")
 
 for dset in "${datasets[@]}"
