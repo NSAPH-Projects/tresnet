@@ -60,13 +60,13 @@ def benchmarks_from_dir(root_dir: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     # rank by seed too. Ranks are compute from the average mse along the curve
     curve_train_mse = (
         results.groupby(["dataset", "family", "experiment", "seed"])
-        .apply(lambda x: (x["train_srf"] - x["true_train_srf"]).mean() ** 2)
+        .apply(lambda x: (x["train_srf"] - x["true_train_srf"] ** 2).mean())
         .reset_index()
         .rename(columns={0: "train_mse"})
     )
     curve_test_mse = (
         results.groupby(["dataset", "family", "experiment", "seed"])
-        .apply(lambda x: (x["test_srf"] - x["true_test_srf"]).mean() ** 2)
+        .apply(lambda x: (x["train_srf"] - x["true_train_srf"] ** 2).mean())
         .reset_index()
         .rename(columns={0: "test_mse"})
     )
@@ -80,46 +80,46 @@ def benchmarks_from_dir(root_dir: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         .rank(ascending=False)
         .test_mse
     )
-    ranks = pd.concat([curve_train_mse, curve_test_mse], axis=1)
+    ranks = curve_train_mse.merge(curve_test_mse, on=["dataset", "family", "seed", "experiment"])
 
-    # compute ROC from rankings
-    roc_train = curve_train_mse.groupby(
-        ["dataset", "family", "experiment"]
-    ).train_rank.apply(np.cumsum)
-    roc_train = roc_train.reset_index().rename(columns={"level_3": "curve_index"})
-    roc_train["train_rank_norm"] = (
-        roc_train.groupby(["dataset", "family"])
-        .train_rank.apply(lambda x: x / x.max())
-        .values
-    )
+    # compute ROC by dataset from rankings
+    # roc_train = curve_train_mse.groupby(
+    #     ["dataset", "family", "experiment"]
+    # ).train_rank.apply(lambda x: np.cumsum(sorted(x, reverse=True)) / np.nansum(x))
+    # roc_train = roc_train.reset_index().rename(columns={"level_3": "curve_index"})
+    # roc_train["train_rank_norm"] = (
+    #     roc_train.groupby(["dataset", "family"])
+    #     .train_rank.apply(lambda x: x / x.max())
+    #     .values
+    # )
 
-    roc_test = curve_test_mse.groupby(
-        ["dataset", "family", "experiment"]
-    ).test_rank.apply(np.cumsum)
-    roc_test = roc_test.reset_index().rename(columns={"level_3": "curve_index"})
-    roc_test["test_rank_norm"] = (
-        roc_test.groupby(["dataset", "family"])
-        .test_rank.apply(lambda x: x / x.max())
-        .values
-    )
+    # roc_test = curve_test_mse.groupby(
+    #     ["dataset", "family", "experiment"]
+    # ).test_rank.apply( np.cumsum(sorted(x, reverse=True)) / np.nansum(x))
+    # roc_test = roc_test.reset_index().rename(columns={"level_3": "curve_index"})
+    # roc_test["test_rank_norm"] = (
+    #     roc_test.groupby(["dataset", "family"])
+    #     .test_rank.apply(lambda x: x / x.max())
+    #     .values
+    # )
 
-    roc = roc_train.merge(
-        roc_test, on=["dataset", "family", "experiment", "curve_index"]
-    )
+    # roc = roc_train.merge(
+    #     roc_test, on=["dataset", "family", "experiment", "curve_index"]
+    # )
 
-    # auc from ROC
-    auc = (
-        roc.groupby(["dataset", "family", "experiment"])
-        .mean()
-        .drop(columns=["curve_index"])
-    )
+    # # auc from ROC
+    # auc = (
+    #     roc.groupby(["dataset", "family", "experiment"])
+    #     .mean()
+    #     .drop(columns=["curve_index"])
+    # )
 
     return dict(
         results=results,
         metrics=error_metrics,
         ranks=ranks,
-        roc=roc,
-        auc=auc,
+        # roc=roc,
+        # auc=auc,
     )
 
 

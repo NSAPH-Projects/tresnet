@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 import random
 from typing import Callable
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import Tensor, Generator
@@ -101,17 +102,19 @@ class Bernoulli(GLMFamily):
 class Poisson(GLMFamily):
     """Poisson error model"""
 
+    def __init__(self, offset: float = 0.0):
+        super().__init__()
+        self.off = offset
+
+
     def link(self, x: Tensor) -> Tensor:
-        # # pass x through a symlog
-        # sml = torch.sign(x) * torch.log1p(torch.abs(0.1 * x))
-        # return torch.exp(sml)
-        return torch.exp(x)
+        return torch.exp(x + self.off)
 
     def inverse_link(self, x: Tensor) -> Tensor:
         # y = torch.log(x + 1e-6)
         # # revert symlog from link
         # return torch.sign(y) * (torch.exp(torch.abs(y)) - 1) / 0.1
-        return torch.log(x + 1e-3)
+        return torch.log(x + 1e-3) - self.off
 
     def loss(
         self,
@@ -121,8 +124,8 @@ class Poisson(GLMFamily):
         min=-7,
         max=7,
     ) -> Tensor:
-        lp = linear_predictor.clamp(min=-7, max=7)
-        return F.poisson_nll_loss(lp, target, log_input=True, reduction=reduction)
+        lp =  linear_predictor.clamp(linear_predictor + self.off).clamp(min=-7, max=7)
+        return F.poisson_nll_loss(lp, target, log_input=True, reduction=reduction, full=True)
 
     def sampler(self, generator: torch.Generator) -> callable:
-        return lambda lp: torch.poisson(torch.exp(lp))
+        return lambda l: torch.poisson(torch.exp(l), generator=generator)
