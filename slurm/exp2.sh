@@ -8,4 +8,4 @@
 #SBATCH --mail-type=ALL
 
 # rm -rf .snakemake/locks/*
-snakemake --rerun-incomplete --cores 48 --configfile conf/snakemake.yaml -C use_srun=true experiment=exp1
+snakemake --use-conda --rerun-incomplete --cores 48 exp2_all --configfile conf/snakemake.yaml -C use_srun=true

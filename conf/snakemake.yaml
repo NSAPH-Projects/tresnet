@@ -1,30 +1,79 @@
-experiment: ???
 use_srun: false
-exp1:
-  strategies:
-    - tresnet-clever
-    - tresnet-clever-reg
-    - aipw
-    - tmle-clever
-    - tarnet
-  backbones:
-    - vc
-    - causalmlp
-  architectures:
-    - small
-    - large
-  datasets:
-    - ihdp
-    - ihdp-B
-    - news
-    - sim-B
-    - sim-N
-    - tcga-1
-    - tcga-2
-    - tcga-3
-  num_seeds: 30
-  families:
-    - gaussian
+
+experiments:
+  exp1:  # does targeting work?
+    strategies:
+      - tresnet-clever
+      - tresnet-clever-reg
+      - aipw
+      - tmle-clever
+      - tarnet
+    backbones:
+      - vc
+      - causalmlp
+    architectures:
+      - small
+      - large
+    datasets:
+      - ihdp
+      - ihdp-B
+      - news
+      - sim-B
+      - sim-N
+      - tcga-1
+      - tcga-2
+      - tcga-3
+    num_seeds: 30
+    families:
+      - gaussian
+
+  exp2:  # comparison with vcnet
+    strategies:
+      - tresnet-clever
+      - tresnet-clever-ps
+      - vcnet
+    backbones:
+      - vc
+    architectures:
+      - small
+      - large
+    datasets:
+      - ihdp
+      - ihdp-B
+      - news
+      - sim-B
+      - sim-N
+      - tcga-1
+      - tcga-2
+      - tcga-3
+    num_seeds: 30
+    families:
+      - gaussian
+
+  exp3:  # comparison of density learning strategyes
+    strategies:
+      - ipw_classifier
+      - ipw_ps
+      - ipw_hybrid
+      - ipw_multips
+    backbones:
+      - vc
+    architectures:
+      - small
+      - large
+    datasets:
+      - ihdp
+      - ihdp-B
+      - news
+      - sim-B
+      - sim-N
+      - tcga-1
+      - tcga-2
+      - tcga-3
+    num_seeds: 30
+    families:
+      - gaussian
+
 
 logdir: logs
 subdir: ""  # this forces overwriting of logs instead of adding a per day/hour log
