@@ -1,7 +1,8 @@
 from abc import abstractmethod
 import random
-from torch import Tensor
+from typing import Callable, Any
 
+from torch import Tensor
 import pytorch_lightning as pl
 from sklearn.model_selection import train_test_split
 import torch
@@ -15,12 +16,12 @@ class TresnetDataModule(pl.LightningDataModule):
         self,
         shift_values: Tensor,
         shift: Shift,
-        family: glms.GLMFamily = glms.Gaussian,
+        family: glms.GLMFamily = glms.Gaussian(),
         batch_size: int | None = None,
         num_workers: int | None = None,
         normalize_covariates: bool = True,
         normalize_outcome: bool = True,
-        noise_scale: float = 0.1,
+        noise_scale: float = 0.5,
         data_opts: dict = {},
         sampler_opts: dict = {},
     ) -> None:
@@ -72,10 +73,17 @@ class TresnetDataModule(pl.LightningDataModule):
         # generated_seed will be used for counterfactuals to ensure
         # exogenous noise is the same in a counterfactual curve
         lp = self.linear_predictor(covariates, t)
-        if self.normalize_outcome:  # in (-5, 5)
-            lp_min = lp.min()
-            lp_max = lp.max()
-            lp = 10 * (lp - lp_min) / (lp_max - lp_min) - 5
+        if self.normalize_outcome:
+            lp_min, lp_max = lp.min(), lp.max()
+            if isinstance(self.family, glms.Bernoulli):
+                m, M = -10, 10
+            elif isinstance(self.family, glms.Gaussian):
+                m, M = -100, 100
+            elif isinstance(self.family, glms.Poisson):
+                m, M = 0, 10
+            else:
+                raise ValueError(f"Unknown family {self.family}")
+            lp = m + (M - m) * ((lp - lp_min) / (lp_max - lp_min))
 
         generator_seed = random.randint(0, 2**32 - 1)
         sampler = self.family.sample_from_linear_predictor
@@ -85,7 +93,7 @@ class TresnetDataModule(pl.LightningDataModule):
         lp_shifted = [self.linear_predictor(covariates, s) for s in shifted]
         if self.normalize_outcome:
             lp_shifted = [
-                10 * (L - lp_min) / (lp_max - lp_min) - 5 for L in lp_shifted
+                m + (M - m) * ((lp - lp_min) / (lp_max - lp_min)) for lp in lp_shifted
             ]
 
         counterfacutals = [

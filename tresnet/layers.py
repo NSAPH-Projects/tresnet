@@ -159,9 +159,9 @@ class VCLinear(nn.Module):
             self.b_wts = nn.Parameter(torch.zeros(self.sdim, self.out_dim))
 
         # initialize weights
-        nn.init.xavier_uniform_(self.W_wts)
+        nn.init.xavier_uniform_(self.W_wts, 0.1)
         if self.bias:
-            nn.init.xavier_uniform_(self.b_wts)
+            nn.init.xavier_uniform_(self.b_wts, 0.1)
 
     def forward(self, inputs: Tensor) -> Tensor:
         treatment = inputs[:, 0]
