@@ -1,11 +1,10 @@
 import logging
-import yaml
 from glob import glob
-from tqdm import tqdm
 
 import numpy as np
 import pandas as pd
-
+import yaml
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,6 @@
+# @package _global_
+tr:
+  freeze: true
+treatment:
+  loss: ps
+estimator: aipw

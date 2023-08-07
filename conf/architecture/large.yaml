@@ -1,0 +1,4 @@
+# @package _global_
+body:
+  hidden_dim: 64
+  hidden_layers: 2

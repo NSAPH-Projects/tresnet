@@ -1,22 +1,29 @@
-import logging
+from dataclasses import dataclass
 from collections import defaultdict
-from typing import Literal
+import itertools
+from typing import Any, Literal, Optional
 
-import lightning.pytorch as pl
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+import lightning.pytorch as pl
+import matplotlib.pyplot as plt
+import matplotlib
 
-from tresnet import glms, layers, shifts
+from tresnet import layers, shifts, utils, glms
 
-# import matplotlib
+matplotlib.use("Agg")
 
-LOGGER = logging.getLogger(__name__)
 
-# matplotlib.use("Agg")
+@dataclass
+class TresnetOuputs:
+    pred_logratio: Tensor | None = None  # predicted logits
+    pred_proba: Tensor | None = None  # predicted logits
+    pred_outcome: Tensor | None = None  # predicted outcome
+    features: Tensor | None = None  # hidden features
+    fluctuation: Tensor | None = None  # fluctuations
 
 
 class OutcomeHead(nn.Module):
@@ -24,7 +31,7 @@ class OutcomeHead(nn.Module):
 
     def __init__(
         self,
-        outcome_type: Literal["vc", "causalmlp", "piecewise"],
+        outcome_type: Literal["vc", "mlp", "piecewise"],
         config: layers.ModuleConfig,
         vc_spline_degree: int = 2,
         vc_spline_knots: list[float] = [0.33, 0.66],
@@ -35,10 +42,8 @@ class OutcomeHead(nn.Module):
         self.glm_family = glm_family
         if outcome_type == "vc":
             kwargs = dict(spline_degree=vc_spline_degree, spline_knots=vc_spline_knots)
-        elif outcome_type == "causalmlp":
-            kwargs = dict()  # add dimension
-        elif outcome_type == "piecewise":
-            kwargs = dict()
+        elif outcome_type == "mlp":
+            kwargs = dict(causal=True)  # add dimension
         else:
             raise NotImplementedError
         self.model = config.make_module(outcome_type, **kwargs)
@@ -60,7 +65,6 @@ class OutcomeHead(nn.Module):
         weights: Tensor | None = None,
         detach_intercept: bool = False,
         return_errors: bool = False,
-        noise: float = 0.0,
     ) -> Tensor:
         # obtain predictor
         if len(treatment.shape) == 1:
@@ -79,8 +83,7 @@ class OutcomeHead(nn.Module):
         targets = targets[:, None].repeat(1, lp.shape[1])
 
         # eval loss per item
-        lp_noisy = lp + noise * torch.randn_like(lp)
-        loss_ = self.glm_family.loss(lp_noisy, targets, reduction="none")
+        loss_ = self.glm_family.loss(lp, targets, reduction="none")
         # aggregate
         if weights is not None:
             loss_ = loss_ * weights
@@ -107,14 +110,12 @@ class RatioHead(nn.Module):
         ratio_spline_degree: int = 2,
         ratio_spline_knots: list[float] = [0.33, 0.66],
         label_smoothing: float = 0.01,
-        treatment_noise: float = 0.1,
     ) -> None:
         super().__init__()
         self.ratio_loss = ratio_loss
         self.register_buffer("shift_values", torch.FloatTensor(shift_values))
         self.label_smoothing = label_smoothing
         self.shift = shift
-        self.treatment_noise = treatment_noise
 
         # validate shift type and ratio type
         if not ratio_loss in ("ps", "hybrid"):
@@ -159,8 +160,8 @@ class RatioHead(nn.Module):
                 ps_obs.append(self.ps(inputs))
             ps_inv = torch.stack(ps_inv, 1)
             ps_obs = torch.stack(ps_obs, 1)
-            numerator = torch.log(ps_inv + 1e-2) + logdet
-            denominator = torch.log(ps_obs + 1e-2)
+            numerator = torch.log(ps_inv + 1e-6) + logdet
+            denominator = torch.log(ps_obs + 1e-6)
             log_ratio = numerator - denominator
 
         elif self.ratio_loss == "multips":
@@ -184,16 +185,12 @@ class RatioHead(nn.Module):
                 log_ratio.append(self.class_logits[i](inputs))
             log_ratio = torch.cat(log_ratio, 1)
 
-            # use a tanh filter
-            log_ratio = 3.0 * torch.tanh(0.5 * log_ratio.clamp(-6, 6))
+            # use a tanh filter to ensure it is in (-3, 3)
+            # log_ratio = 3.0 * torch.tanh(log_ratio / 3.0)
 
         return log_ratio
 
     def loss(self, treatment: Tensor, features: Tensor) -> Tensor:
-        if self.treatment_noise > 0:
-            noise = self.treatment_noise * torch.randn_like(treatment)
-            new_logits = torch.logit(treatment.clamp(0.01, 0.99)) + noise
-            treatment = torch.sigmoid(new_logits)
         inputs = torch.cat([treatment[:, None], features], 1)
         if self.ratio_loss == "ps":
             # likelihood/erm loss
@@ -232,13 +229,10 @@ class Tresnet(pl.LightningModule):
         enc_hidden_layers: int,
         shift_values: list[float],
         shift: shifts.Shift,
-        independent_encoders: bool = False,
         outcome_freeze: bool = False,
-        outcome_type: str = Literal["vc", "mlp", "piecewise"],
+        outcome_type: str = Literal["vc", "mlp", "drnet"],
         outcome_spline_degree: int = 2,
         outcome_spline_knots: list[float] = [0.33, 0.66],
-        outcome_loss_weight: float = 1.0,
-        outcome_training_noise: float = 0.0,
         glm_family: glms.GLMFamily = glms.Gaussian(),
         ratio_freeze: bool = False,
         ratio_loss: Literal["ps", "hybrid", "classifier", "multips"] = "ps",
@@ -247,65 +241,55 @@ class Tresnet(pl.LightningModule):
         ratio_grid_size: int = 10,
         ratio_label_smoothing: float = 0.01,
         ratio_loss_weight: float = 1.0,
-        ratio_norm: bool = False,
-        ratio_norm_weight: float = 0.0,
-        tr: bool = True,
+        tr: bool = True,  # targeted regularization
         tr_spline_degree: int = 2,
         tr_spline_knots: list[float] = list(np.linspace(0, 1, num=10)[1:-1]),
         tr_param_type: Literal["discrete", "spline"] = "discrete",
-        tr_opt_freq: int = 100,
+        tr_opt_freq: int = 25,
         tr_clever: bool = True,
+        tr_weight_norm: bool = False,
         tr_loss_weight: float = 0.1,
-        tr_consistency_weight: float = 0.0,
         tr_tmle: bool = False,
-        act: nn.Module = nn.ReLU,
-        optimizer: Literal["adam", "sgd"] = "adam",
-        optimizer_opts: dict = {},
+        act: nn.Module = nn.SiLU,
+        opt_lr: float = 1e-3,
+        opt_weight_decay: float = 5e-3,
+        opt_optimizer: Literal["adam", "sgd"] = "adam",
         dropout: float = 0.0,
-        grad_clip: float = 1.0,
         true_srf_train: Tensor | None = None,
         true_srf_val: Tensor | None = None,
         plot_every_n_epochs: int = 100,
         estimator: None | Literal["ipw", "aipw", "outcome", "tr", "tr_aipw"] = None,
-        estimator_ma_weight: float = 0.1,
         finetune_after: float | None = None,
         finetune_mask_ratio: float = 0.0,
         finetune_freeze_nuisance: bool = False,
-        finetune_decrease_lr_after: int | None = None,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
         self.register_buffer("shift_values", torch.FloatTensor(shift_values))
         self.outcome_freeze = outcome_freeze
-        self.outcome_loss_weight = outcome_loss_weight
-        self.outcome_training_noise = outcome_training_noise
         self.glm_family = glm_family
         self.ratio_freeze = ratio_freeze
         self.ratio_loss_weight = ratio_loss_weight
-        self.ratio_norm_loss_weight = ratio_norm_weight
         self.tr = tr
         self.tr_param_type = tr_param_type
         self.tr_clever = tr_clever
-        self.ratio_norm = ratio_norm
+        self.tr_weight_norm = tr_weight_norm
         self.tr_loss_weight = tr_loss_weight
-        self.tr_freq = tr_opt_freq
+        self.tr_opt_freq = tr_opt_freq
         self.tr_tmle = tr_tmle
-        self.tr_consistency_weight = tr_consistency_weight
-        self.tr_erf = tr_param_type == "erf"
-        self.optimizer = optimizer
-        self.optimizer_opts = optimizer_opts
+        self.optimizer = opt_optimizer
+        self.lr = opt_lr
+        self.wd = opt_weight_decay
         self.register_buffer("true_srf_train", true_srf_train)
         self.register_buffer("true_srf_val", true_srf_val)
         self.shift = shift
         self.plot_every_n_epochs = plot_every_n_epochs
         self.estimator = estimator
-        self.estimator_ma_weight = estimator_ma_weight
         self.finetune_after = finetune_after
         self.finetune_mask_ratio = finetune_mask_ratio
         self.finetune_freeze_nuisance = finetune_freeze_nuisance
-        self.finetune_decrease_lr_after = finetune_decrease_lr_after
-        self.grad_clip = grad_clip
-        self.independent_encoders = independent_encoders
+        self.finetuning = False
+        self.old_requires_grad = {}
 
         # layer kwargs
         lkwargs = dict(
@@ -321,15 +305,7 @@ class Tresnet(pl.LightningModule):
             layers.LayerConfig(in_dim, hidden_dim, True, **lkwargs),
             *hidden,
         )
-        if independent_encoders:
-            self.encoder = torch.nn.ModuleDict(
-                {
-                    "treatment": encoder_config.make_module("mlp"),
-                    "outcome": encoder_config.make_module("mlp"),
-                }
-            )
-        else:
-            self.encoder = encoder_config.make_module("mlp")
+        self.encoder = encoder_config.make_module("mlp")
 
         # make outcome model
         outcome_config = layers.ModuleConfig(
@@ -361,8 +337,6 @@ class Tresnet(pl.LightningModule):
             self.tr_model = nn.Parameter(torch.zeros(len(shift_values)))
         elif tr_param_type == "spline":
             self.tr_model = layers.SplineFluctuation(tr_spline_degree, tr_spline_knots)
-        elif tr_param_type == "erf":
-            self.tr_model = layers.SplineFluctuation(tr_spline_degree, tr_spline_knots)
 
         # holders for some of the estimators of SRFs
         self.estimator_names = [
@@ -384,136 +358,98 @@ class Tresnet(pl.LightningModule):
         if self.outcome_freeze:
             for param in self.outcome.parameters():
                 param.requires_grad_(False)
-            if self.independent_encoders:
-                for param in self.encoder["outcome"].parameters():
-                    param.requires_grad_(False)
 
         if self.ratio_freeze:
             for param in self.ratio.parameters():
                 param.requires_grad_(False)
-            if self.independent_encoders:
-                for param in self.encoder["treatment"].parameters():
-                    param.requires_grad_(False)
 
         if not self.tr or self.tr_tmle:
+            self.tr_opt_freq = 1
             if self.tr_param_type == "discrete":
                 self.tr_model.requires_grad_(False)
-            elif self.tr_param_type in ("spline", "erf"):
+            elif self.tr_param_type == "spline":
                 for param in self.tr_model.parameters():
                     param.requires_grad_(False)
 
-        self.automatic_optimization = False
-        self.finetuning = False
+    def forward(self, treatment: Tensor, confounders: Tensor) -> TresnetOuputs:
+        outputs = {}
 
-    def fluct_param(self, treatment: Tensor | None = None) -> Tensor:
+        # encode features
+        features = self.encoder(confounders)
+        outputs["features"] = features
+
+        # outcome model
+        pred_outcome = self.outcome(treatment, features)
+        outputs["pred_outcome"] = pred_outcome
+
+        # ratio model
+        logratio = self.ratio(treatment, features)
+        outputs["pred_logratio"] = logratio
+
+        # fluctuation model
+        outputs["fluctuation"] = self.fluct_param()
+
+        return TresnetOuputs(**outputs)
+
+    def fluct_param(self) -> Tensor:
         if self.tr_param_type == "discrete":
             eps = self.tr_model
         elif self.tr_param_type == "spline":
             eps = self.tr_model(self.shift_values)
-        elif self.tr_param_type == "erf":
-            eps = self.tr_model(treatment)
         return eps
 
-    def losses_and_estimators(
+    def losses(
         self, confounders: Tensor, treatment: Tensor, outcome: Tensor
     ) -> tuple[dict[str, Tensor], dict[str, Tensor]]:
         losses = {}
         estimators = {}
 
         # hidden features
-        if self.independent_encoders:
-            features_out = self.encoder["outcome"](confounders)
-            features_treat = self.encoder["treatment"](confounders)
-        else:
-            features = self.encoder(confounders)
-            features_out = features
-            features_treat = features
+        features = self.encoder(confounders)
 
         # 1. outcome loss
         losses["outcome"], errors = self.outcome.loss(
-            treatment,
-            features_out,
-            outcome,
-            return_errors=True,
-            noise=self.outcome_training_noise,
+            treatment, features, outcome, return_errors=True
         )
         self.lp = self.outcome.lp
         losses["mean_error"] = errors.mean()
-        # if self.outcome_freeze:
-        #     losses["outcome"] = losses["outcome"].detach()
+        if self.outcome_freeze:
+            losses["outcome"] = losses["outcome"].detach()
 
         # 2. ratio loss
-        losses["ratio"] = self.ratio.loss(treatment, features_treat)
-        # if self.ratio_freeze:
-        #     losses["ratio"] = losses["ratio"].detach()
+        losses["ratio"] = self.ratio.loss(treatment, features)
+        if self.ratio_freeze:
+            losses["ratio"] = losses["ratio"].detach()
 
         # combine ratio and outcome
         # losses["ratio_outcome"] = losses["ratio"] + losses["outcome"]
 
         # 3. tr loss
-        fluct = self.fluct_param(treatment).unsqueeze(0)
+        fluct = self.fluct_param().unsqueeze(0)
         losses["fluct"] = torch.abs(fluct).mean()
 
-        logratio = self.ratio(treatment, features_treat)
-        w = torch.exp(logratio)  # density ratio wts
-        losses["ratio_norm"] = (w.mean(0) - 1).pow(2).mean()
-        if self.ratio_norm:
+        logratio = self.ratio(treatment, features)
+        w = torch.exp(logratio.clamp(-10, 10))  # density ratio wts
+        if self.tr_weight_norm:
             w = w / w.mean(0, keepdim=True)
-
-        # consistency, reweighted predictions should be consistent
-        shifted = self.shift(treatment[:, None], self.shift_values[None, :])
-        #
-        n_shifts = len(self.shift_values)
-        link = self.glm_family.link
-        invlink = self.glm_family.inverse_link
-        pred_obs = link(self.outcome(treatment, features_out)).squeeze(1)
-        pred_shifted = torch.cat(
-            [
-                link(self.outcome(shifted[:, i], features_treat))
-                for i in range(n_shifts)
-            ],
-            axis=1,
-        )
-        pred_shifted_mean = pred_shifted.mean(0)
-        tgt = (w * pred_obs[:, None]).mean(0)
-        consistency_loss = (tgt - pred_shifted_mean).pow(2).mean()
-        losses["consistency"] = consistency_loss
-
         self.w = w.detach().clone()
 
-        if self.tr_erf:
-            # override w
-            inputs = torch.cat([treatment[:, None], features_out], 1)
-            ps = self.ratio.ps(inputs)[:, None]
-            self.ps_eval = ps
-            w_tr = 1.0 / (ps + 1e-3)
-            if self.ratio_norm:
-                w_tr = w_tr / w.mean(0, keepdim=True)
-            fluct = fluct.T  #  in erf, fluct is over batch dim
-            loss_wts = w_tr
-        else:
-            if self.tr_clever:
-                fluct = w * fluct
-            loss_wts = w
+        if self.tr_clever:
+            fluct = w * fluct
+
+        # it's wrong to give the shifted treatment
+        # shifted = self.shift(treatment[:, None], self.shift_values[None, :])
 
         losses["tr"], errors = self.outcome.loss(
             treatment=treatment,
-            features=features_out,
+            features=features,
             targets=outcome,
             bias=fluct,
-            weights=loss_wts if not self.tr_clever else None,
+            weights=w if not self.tr_clever else None,
             detach_intercept=True,
             return_errors=True,
-            noise=self.outcome_training_noise,
         )
-        if not self.tr_erf:
-            losses["tr_mean_error"] = (w * errors).mean()
-        else:
-            with torch.no_grad():
-                losses["tr_mean_error"] = (w_tr * errors).mean()
-
-        # if not self.tr:
-        #     losses["tr"] = losses["tr"].detach()
+        losses["tr_mean_error"] = (w * errors).mean()
 
         # 4. estimators per batch
         with torch.no_grad():
@@ -523,23 +459,25 @@ class Tresnet(pl.LightningModule):
             srf_aipw = torch.zeros_like(self.shift_values)
             srf_tr_aipw = torch.zeros_like(self.shift_values)
 
-            if self.tr_erf:
-                srf_adj = fluct.repeat(1, n_shifts)
-            else:
-                srf_adj = fluct
+            srf_adj = fluct
+            shifted = self.shift(treatment[:, None], self.shift_values[None, :])
 
-            if self.ratio.ratio_loss in ("ps", "hybrid"):
-                inputs = torch.cat([treatment[:, None], features_out], 1)
-                ps = self.ratio.ps(inputs)
+            link = self.glm_family.link
+            invlink = self.glm_family.inverse_link
+            pred_obs = link(self.outcome(treatment, features)).squeeze(1)
 
             for i in range(len(self.shift_values)):
                 w_i = w[:, i] / w[:, i].mean()
                 srf_ipw[i] = (w_i * outcome).mean()
-                srf_outcome[i] = pred_shifted_mean[i]
-                srf_tr[i] = link(invlink(srf_outcome[i]) + srf_adj[:, i]).mean()
-                shift_error_i = (w_i * (outcome - pred_obs)).mean()
-                srf_aipw[i] = shift_error_i + srf_outcome[i]
-                srf_tr_aipw[i] = shift_error_i + srf_tr[i]
+                pred_shifted = link(self.outcome(shifted[:, i], features)).squeeze(1)
+                srf_outcome[i] = pred_shifted.mean()
+                pred_shift_adj = link(invlink(pred_shifted) + srf_adj[:, i])
+                pred_obs_adj = link(invlink(pred_obs) + srf_adj[:, i])
+                srf_tr[i] = pred_shift_adj.mean()
+                srf_aipw[i] = (w_i * (outcome - pred_obs)).mean() + pred_shifted.mean()
+                srf_tr_aipw[i] = (
+                    w_i * (outcome - pred_obs_adj)
+                ).mean() + pred_shift_adj.mean()
 
             estimators["srf_tr_aipw"] = srf_tr_aipw
             estimators["srf_aipw"] = srf_aipw
@@ -547,118 +485,84 @@ class Tresnet(pl.LightningModule):
             estimators["srf_outcome"] = srf_outcome
             estimators["srf_tr"] = srf_tr
 
-        # check if ther eis any nan in any of the losses
-        for k, v in losses.items():
-            if torch.isnan(v).any():
-                LOGGER.error(f"NaN in loss {k}")
-                raise Exception(f"NaN in loss {k}")
-
         return losses, estimators
+
+    def on_train_batch_start(self, batch: Any, batch_idx: int) -> int | None:
+        core_models = [self.encoder, self.ratio, self.outcome]
+        core_params = itertools.chain(*[m.parameters() for m in core_models])
+        if self.global_step % self.tr_opt_freq != 0:
+            for param in core_params:
+                if param not in self.old_requires_grad:
+                    self.old_requires_grad[param] = param.requires_grad
+                param.requires_grad_(False)
+                param.grad = None
+            for m in core_models:
+                m.eval()
+        else:
+            for param in core_params:
+                if param in self.old_requires_grad:
+                    param.requires_grad_(self.old_requires_grad[param])
+            for m in core_models:
+                m.train()
 
     def training_step(self, batch: tuple[Tensor], _):
         treatment, confounders, outcome = batch
-        opt, opt_tr = self.optimizers()
 
-        # 1 -- optimize network (not fluctuation) --
-        opt.zero_grad()
+        # subset data if finetunemask_ratio is positive
+        if not self.finetuning and self.finetune_mask_ratio > 0:
+            k = int(1 / (self.finetune_mask_ratio + 1e-12))
+            m = confounders.shape[0]
+            if m > k:
+                ixs = [i for i in range(m) if i % k != 0]
+                confounders = confounders[ixs]
+                treatment = treatment[ixs]
+                outcome = outcome[ixs]
 
-        # if finetuning, remove some of the data
-        # if not self.finetuning:
-        #     k = int(1 / (self.finetune_mask_ratio + 1e-12))
-        #     m = confounders.shape[0]
-        #     if m > k:
-        #         ixs = [i for i in range(m) if i % k != 0]
-        #         confounders = confounders[ixs]
-        #         treatment = treatment[ixs]
-        #         outcome = outcome[ixs]
-
-        losses, estimators = self.losses_and_estimators(confounders, treatment, outcome)
+        losses, estimators = self.losses(confounders, treatment, outcome)
 
         # total loss
         loss = (
-            self.outcome_loss_weight * losses["outcome"]
+            losses["outcome"]
             + self.ratio_loss_weight * losses["ratio"]
-            + self.ratio_norm_loss_weight * losses["ratio_norm"]
-            + self.tr_loss_weight * losses["tr"]
-            + self.tr_consistency_weight * losses["consistency"]
+            + self.tr_loss_weight * losses["tr"]  # detach because other opt
         )
-
-        # optimize
-        # if not self.finetuning or not self.finetune_freeze_nuisance:
-        self.manual_backward(loss)
-        torch.nn.utils.clip_grad_value_(self.parameters(), self.grad_clip)
-        opt.step()
-        # else:
-        #     loss = loss.detach()
 
         # save estimators of batch
         for k, v in estimators.items():
             self.estimators_batches[k + "_train"].append(v)
 
-        # 2 -- optimize fluctuation --
-        def closure():
-            opt_tr.zero_grad()
-            lp = self.lp.detach().clone()
-            if self.tr_param_type != "erf":
-                w = self.w.detach().clone()
-                fluct = self.fluct_param(treatment).unsqueeze(0)
-            else:
-                ps = self.ps_eval.detach().clone()
-                w = 1 / (ps + 1e-3)
-                w = w / w.mean()
-                fluct = self.fluct_param(treatment).unsqueeze(1)
-
-            if self.tr_clever:
-                adj = lp + w * fluct
-                loss_tr = self.glm_family.loss(adj, outcome[:, None]).mean()
-            else:
-                adj = lp + fluct
-                loss_tr = (w * self.glm_family.loss(adj, outcome[:, None])).mean()
-            self.manual_backward(loss_tr)
-            if self.tr_param_type == "discrete":
-                torch.nn.utils.clip_grad_value_(self.tr_model, self.grad_clip)
-            else:
-                torch.nn.utils.clip_grad_value_(
-                    self.tr_model.parameters(), self.grad_clip
-                )
-            return loss_tr
-
-        for _ in range(self.tr_freq):
-            if self.tr:
-                if not self.tr_tmle or self.current_epoch > self.finetune_after:
-                    opt_tr.step(closure=closure)
-
         # log losses and return
         log_dict = {"train/" + k: v for k, v in losses.items()}
         self.log_dict(log_dict, prog_bar=True, on_epoch=True, on_step=False)
 
-        # return loss
+        return loss
 
     def on_train_epoch_end(self):
-        # get num epochs
+        # check if fine tuning
         ep = self.current_epoch
-        if ep >= self.finetune_after:
+        if ep >= self.finetune_after and not self.finetuning:
             self.finetuning = True
-            # freeze ratio
+
+        # get num epochs
+        if self.finetuning and not getattr(self, "has_unfrozen", False):
             if self.tr_tmle or self.finetune_freeze_nuisance:
+                # freeze body params
                 for param in self.encoder.parameters():
                     param.requires_grad_(False)
-                    param.grad = None
 
+                # freeze ratio
                 for param in self.ratio.parameters():
                     param.requires_grad_(False)
-                    param.grad = None
 
                 # freeze outcome head
                 for param in self.outcome.parameters():
                     param.requires_grad_(False)
-                    param.grad = None
 
-            # unfreeze fluctuation, used in tmle only
+            # unfreeze tr, used only for tmle
             if self.tr_tmle:
                 if self.tr_param_type == "discrete":
                     self.tr_model.requires_grad_(True)
-                else:
+                elif self.tr_param_type == "spline":
                     for param in self.tr_model.parameters():
                         param.requires_grad_(True)
 
@@ -666,34 +570,23 @@ class Tresnet(pl.LightningModule):
             for m in self.modules():
                 if isinstance(m, nn.Dropout):
                     m.p = 0.0
-            
-            self.tr_freq = 1
+
+            self.has_unfrozen = True
 
         self._on_end("train")
 
-        # step scheduler
-        if self.finetune_decrease_lr_after is not None:
-            # sch1, sch2 = self.lr_schedulers()
-            sch1 = self.lr_schedulers()
-            if (
-                not self.finetuning
-                or not self.finetune_freeze_nuisance
-                or not self.tr_tmle
-            ):
-                sch1.step()
-            # sch2.step()
-
     def validation_step(self, batch: tuple[Tensor], _):
-        # set to eval mode
-        treatment, confounders, outcome = batch
-        losses, estimators = self.losses_and_estimators(confounders, treatment, outcome)
+        with torch.no_grad():
+            # set to eval mode
+            treatment, confounders, outcome = batch
+            losses, estimators = self.losses(confounders, treatment, outcome)
 
-        # save estimators of batch
-        for k, v in estimators.items():
-            self.estimators_batches[k + "_val"].append(v)
+            # save estimators of batch
+            for k, v in estimators.items():
+                self.estimators_batches[k + "_val"].append(v)
 
-        log_dict = {"val/" + k: float(v) for k, v in losses.items()}
-        self.log_dict(log_dict, prog_bar=True, on_epoch=True, on_step=False)
+            log_dict = {"val/" + k: float(v) for k, v in losses.items()}
+            self.log_dict(log_dict, prog_bar=True, on_epoch=True, on_step=False)
 
     # function to be applied in both train and validation epoch end
     def _on_end(self, part: Literal["train", "val"]):
@@ -715,10 +608,7 @@ class Tresnet(pl.LightningModule):
             # if the estimator specific to the run was declared
             # then save it under a special name srf_estimator
             if self.estimator is not None and (name == f"srf_{self.estimator}"):
-                with torch.no_grad():
-                    old_val = getattr(self, f"srf_estimator_{part}")
-                    diff = estimated[name] - old_val
-                    old_val += self.estimator_ma_weight * diff
+                setattr(self, f"srf_estimator_{part}", estimated[name])
 
         ep = self.current_epoch
         if ep == 0 or (ep + 1) % self.plot_every_n_epochs == 0:
@@ -737,10 +627,6 @@ class Tresnet(pl.LightningModule):
             error = F.mse_loss(estimator, truth).pow(0.5)
             self.log(f"{part}/estimator_loss", error)
 
-        # log current lr
-        lr = self.optimizers()[0].param_groups[0]["lr"]
-        self.log(f"lr", lr)
-
     def on_validation_epoch_end(self):
         self._on_end("val")
 
@@ -753,41 +639,22 @@ class Tresnet(pl.LightningModule):
         main_params += list(self.outcome.parameters())
         main_params += list(self.ratio.parameters())
         main_params = [p for p in main_params if p is not self.outcome.intercept]
-        param_groups = [dict(params=main_params)]
+        param_groups = [dict(params=main_params, lr=self.lr, weight_decay=self.wd)]
         param_groups.append(dict(params=[self.outcome.intercept], weight_decay=0.0))
 
         tr_group = []
-        tr_opts = dict(weight_decay=0.0)
+        tr_hparams = dict(weight_decay=0.0, lr=0.1)
         if self.tr_param_type == "discrete":
-            tr_group.append(dict(params=[self.tr_model], lr=0.1, **tr_opts))
-        elif self.tr_param_type in ("spline", "erf"):
-            tr_group.append(dict(params=self.tr_model.parameters(), lr=0.1, **tr_opts))
+            tr_group = dict(params=[self.tr_model], **tr_hparams)
+        elif self.tr_param_type == "spline":
+            tr_group = dict(params=self.tr_model.parameters(), **tr_hparams)
 
-        # param_groups.append(tr_group[0])
+        if self.tr:
+            param_groups.append(tr_group)
 
         if self.optimizer == "adam":
-            opt = torch.optim.Adam(param_groups, **self.optimizer_opts)
+            opt = torch.optim.Adam(param_groups, lr=self.lr)
         elif self.optimizer == "sgd":
-            opt = torch.optim.SGD(param_groups, **self.optimizer_opts)
-            # opt_tr = torch.optim.SGD(tr_group, momentum=self.momentum, lr=0.1)
+            opt = torch.optim.SGD(param_groups, momentum=self.momentum)
 
-        opt_tr = torch.optim.Adam(tr_group)
-        # opt_tr = torch.optim.LBFGS(tr_group, lr=0.01)
-        # self.fake = nn.Parameter(torch.zeros(1), requires_grad=True)
-        # opt_tr = torch.optim.Adam([self.fake], lr=0.03)
-
-        # add a scheduler for the optimizer.
-        # must decrease by a factor of 10 after reaching finetune_decrease_lr_after
-        # and stay at that level there after
-        if self.finetune_decrease_lr_after is not None:
-            sch1 = torch.optim.lr_scheduler.StepLR(
-                opt, step_size=self.finetune_decrease_lr_after, gamma=0.1
-            )
-            # sch2 = torch.optim.lr_scheduler.StepLR(
-            #     opt_tr, step_size=self.finetune_decrease_lr_after, gamma=0.1
-            # )
-            return [opt, opt_tr], [sch1]
-            # return [opt], [sch1]
-        else:
-            return [opt, opt_tr]
-            # return opt
+        return opt

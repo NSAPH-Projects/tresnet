@@ -1,0 +1,29 @@
+experiment: ???
+exp1:
+  strategies:
+    - tresnet_clever
+    - tresnet_clever_reg
+    - aipw_classifier
+    - tmle_clever
+    - tarnet
+  backbones:
+    - vc
+    - mlp
+  architectures:
+    - small
+    - large
+  datasets:
+    - ihdp
+    - ihdp-B
+    - news
+    - sim-B
+    - sim-N
+    - tcga-1
+    - tcga-2
+    - tcga-3
+  num_seeds: 30
+  families:
+    - gaussian
+
+logdir: logs
+subdir: ""  # this forces overwriting of logs instead of adding a per day/hour log

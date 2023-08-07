@@ -10,7 +10,7 @@ from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig
 
-from tresnet import Tresnet, glms, shifts
+from tresnet import Tresnet, datamodules, glms, shifts
 
 LOGGER = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def main(args: DictConfig) -> None:
     ).tolist()
 
     # glm family, e.g. Gaussian, Poisson, Bernoulli
-    glm_family = getattr(glms, args.family.capitalize())()
+    glm_family = getattr(glms, args.data_generation.family.capitalize())()
 
     # make dataset from available options
     datamodule_kwargs = dict(
@@ -35,31 +35,43 @@ def main(args: DictConfig) -> None:
         shift_values=shift_values,
         batch_size=args.training.batch_size,
         num_workers=args.training.num_workers,
-        # noise_scale=args.data_generation.noise_scale,
-        # outcome_scale=args.data_generation.outcome_scale,
-        shuffle_batches=args.training.shuffle_batches,
+        noise_scale=args.data_generation.noise_scale,
+        outcome_scale=args.data_generation.outcome_scale,
     )
 
-    datamodule = hydra.utils.instantiate(args.dataset, **datamodule_kwargs)
+    if args.dataset == "ihdp":
+        datamodule = datamodules.IHDP(**datamodule_kwargs)
+    elif args.dataset == "ihdp-B":
+        datamodule = datamodules.IHDPB(**datamodule_kwargs)
+    elif args.dataset == "news":
+        datamodule = datamodules.News(**datamodule_kwargs)
+    elif args.dataset == "sim-B":
+        datamodule = datamodules.SimB(**datamodule_kwargs)
+    elif args.dataset == "sim-N":
+        datamodule = datamodules.SimN(**datamodule_kwargs)
+    elif args.dataset.startswith("tcga"):
+        dosage_variant = int(args.dataset.split("-")[1])
+        datamodule = datamodules.TCGA(
+            **datamodule_kwargs, data_opts=dict(dosage_variant=dosage_variant)
+        )
+    else:
+        raise ValueError(f"Unknown dataset '{args.dataset}'")
 
     # set weight of targeted regularization
     n_train = len(datamodule.train_ix)
-    tr_loss_weight = args.tr.base_weight * n_train ** (-0.5)
+    tr_loss_weight = args.tr.weight * n_train ** (-0.5)
 
     # make model
     model = Tresnet(
         in_dim=datamodule.covariates.shape[1],
         hidden_dim=args.body.hidden_dim,
         enc_hidden_layers=args.body.hidden_layers,
-        independent_encoders=args.body.independent_encoders,
         shift_values=shift_values,
         shift=shift,
         outcome_freeze=args.outcome.freeze,
         outcome_spline_degree=2,
         outcome_spline_knots=[0.33, 0.66],
         outcome_type=args.outcome.backbone,
-        outcome_loss_weight=args.outcome.weight,
-        outcome_training_noise=args.outcome.training_noise,
         glm_family=glm_family,
         ratio_freeze=args.treatment.freeze,
         ratio_spline_degree=2,
@@ -68,36 +80,28 @@ def main(args: DictConfig) -> None:
         ratio_grid_size=args.treatment.grid_size,
         ratio_loss=args.treatment.loss,
         ratio_loss_weight=args.treatment.weight,
-        ratio_norm_weight=args.treatment.norm_weight,
-        ratio_norm=args.treatment.norm,
         tr=(not args.tr.freeze),
         tr_loss_weight=tr_loss_weight,
         tr_clever=args.tr.clever,
         tr_param_type=args.tr.type,
-        tr_spline_degree=args.tr.spline_degree,
-        tr_spline_knots=list(args.tr.spline_knots),
+        tr_spline_degree=2,
+        tr_spline_knots=[0.33, 0.66],
+        ratio_norm=args.tr.weight_norm,
         tr_tmle=args.tr.tmle,
         tr_opt_freq=args.training.tr_opt_freq,
-        tr_consistency_weight=args.tr.consistency * tr_loss_weight,
         act=getattr(nn, args.activation),
-        optimizer=args.optimizer.name,
-        optimizer_opts=args.optimizer.args,
+        opt_lr=args.training.lr,
+        opt_weight_decay=args.training.weight_decay,
+        opt_optimizer=args.training.optimizer,
         dropout=args.training.dropout,
-        grad_clip=args.training.grad_clip,
         true_srf_train=datamodule.train_srf,
         true_srf_val=datamodule.val_srf,
         plot_every_n_epochs=max(1, args.training.plot_every * args.training.epochs),
         estimator=args.estimator,
-        estimator_ma_weight=args.estimator_ma_weight,
         finetune_after=int(args.training.finetune.after * args.training.epochs),
         finetune_mask_ratio=args.training.finetune.mask_ratio,
         finetune_freeze_nuisance=args.training.finetune.freeze_nuisance,
-        finetune_decrease_lr_after=int(
-            args.training.finetune.decrease_lr_after * args.training.epochs
-        ),
     )
-    if args.compile:
-        model = torch.compile(model)
 
     # configure directory to save model results, delete contents if experiment
     # get run dir from hydra
@@ -137,6 +141,7 @@ def main(args: DictConfig) -> None:
     trainer = pl.Trainer(
         accelerator="cuda" if torch.cuda.is_available() else "cpu",
         max_epochs=args.training.epochs,
+        # gradient_clip_val=1.0,
         callbacks=callbacks,
         log_every_n_steps=min(100, args.training.epochs),
         check_val_every_n_epoch=min(1, args.training.epochs // 100),
@@ -165,9 +170,8 @@ def main(args: DictConfig) -> None:
         test_srf_outcome=model.srf_outcome_val.detach().cpu().numpy(),
         true_train_srf=datamodule.train_srf,
         true_test_srf=datamodule.val_srf,
+        fluctuation=model.fluct_param().detach().cpu().numpy(),
     )
-    if args.tr and not args.tr.type == "erf":
-        estimates["fluctuation"] = model.fluct_param().detach().cpu().numpy()
 
     estimates = pd.DataFrame(estimates)
     estimates.to_csv(f"{tb_logger.log_dir}/srf_estimates.csv", index=False)

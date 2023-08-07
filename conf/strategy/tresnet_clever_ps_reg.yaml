@@ -1,0 +1,8 @@
+# @package _global_
+tr:
+  clever: true
+  consistency: 0.1
+estimator: tr
+treatment:
+  norm_weight: 0.1
+  loss: ps

@@ -111,15 +111,18 @@ class Poisson(GLMFamily):
         # y = torch.log(x + 1e-6)
         # # revert symlog from link
         # return torch.sign(y) * (torch.exp(torch.abs(y)) - 1) / 0.1
-        return torch.log(x + 1e-6)
-    
+        return torch.log(x + 1e-3)
 
     def loss(
-        self, linear_predictor: Tensor, target: Tensor, reduction: str = "none"
+        self,
+        linear_predictor: Tensor,
+        target: Tensor,
+        reduction: str = "none",
+        min=-7,
+        max=7,
     ) -> Tensor:
-        return F.poisson_nll_loss(
-            linear_predictor, target, log_input=True, reduction=reduction
-        )
+        lp = linear_predictor.clamp(min=-7, max=7)
+        return F.poisson_nll_loss(lp, target, log_input=True, reduction=reduction)
 
     def sampler(self, generator: torch.Generator) -> callable:
         return lambda lp: torch.poisson(torch.exp(lp))

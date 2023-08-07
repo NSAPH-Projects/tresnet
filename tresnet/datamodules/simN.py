@@ -24,8 +24,8 @@ class SimN(TresnetDataModule, pl.LightningDataModule):
         )
         t = (logits + self.noise_scale * torch.randn(n)).sigmoid()
 
-        self._treatment = t
-        self._covariates = x
+        self.treatment = t
+        self.covariates = x
 
     def linear_predictor(self, covariates: Tensor, treatment: Tensor) -> Tensor:
         t, x = treatment, covariates

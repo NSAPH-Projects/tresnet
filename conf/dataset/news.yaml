@@ -1,0 +1,2 @@
+_target_: tresnet.datamodules.News
+noise_scale: 0.25

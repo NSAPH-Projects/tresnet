@@ -1,11 +1,8 @@
-# parts of this code are modified from https://github.com/lushleaf/varying-coefficient-net-with-functional-tr
-# which contains vcnet and drnet implementations.
-
 from dataclasses import dataclass
+
 import torch
-from torch import nn
+from torch import Tensor, nn
 from torch.nn import functional as F
-from torch import Tensor
 
 
 @dataclass
@@ -26,7 +23,7 @@ class LayerConfig:
             bias=self.bias,
         )
 
-    def causal_mlp(self) -> nn.Module:
+    def causalmlp(self) -> nn.Module:
         return CausalLinear(
             in_features=self.in_dim,
             out_features=self.out_dim,
@@ -98,13 +95,19 @@ class DiscreteDensityEstimator(nn.Module):
     probability of the treatment being in each grid cell."""
 
     def __init__(
-        self, in_dim: int, n: int, tmin: float = 0.0, tmax: float = 1.0
+        self,
+        in_dim: int,
+        n: int,
+        tmin: float = 0.0,
+        tmax: float = 1.0,
+        # smoothing: float = 0.1,
     ) -> None:
         super().__init__()
         self.n = n
         self.fc = nn.Linear(in_dim, n + 1, bias=False)
         self.tmin = tmin
         self.tmax = tmax
+        # self.smoothing = smoothing
 
     def forward(self, inputs: Tensor) -> Tensor:
         treatment = inputs[:, 0]
@@ -114,6 +117,11 @@ class DiscreteDensityEstimator(nn.Module):
         # get interpolation params
         a, b, n = self.tmin, self.tmax, self.n
         scaled_treatment = (treatment - a) / (b - a)
+        # scaled_treatment = torch.where(
+        #     torch.rand_like(scaled_treatment) < self.pmin,
+        #     torch.rand_like(scaled_treatment),
+        #     scaled_treatment,
+        # )
         upper_endpoint = torch.ceil(scaled_treatment * n).clamp(0, n)
         lower_endpoint = torch.floor(scaled_treatment * n).clamp(0, n)
         distance_to_lower = scaled_treatment * n - lower_endpoint
@@ -318,7 +326,7 @@ class Treat_Linear(nn.Module):
 
 
 class Multi_head(nn.Module):
-    def __init__(self, cfg, isenhance):
+    def __init__(self, cfg: list[LayerConfig], isenhance: bool = True):
         super(Multi_head, self).__init__()
 
         self.cfg = cfg  # cfg does NOT include the extra dimension of concat treatment
