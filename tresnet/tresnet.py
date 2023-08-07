@@ -722,15 +722,16 @@ class Tresnet(pl.LightningModule):
 
         ep = self.current_epoch
         if ep == 0 or (ep + 1) % self.plot_every_n_epochs == 0:
-            # plot srf vs truth
-            fig, ax = plt.subplots()
-            ax.plot(self.shift_values, truth, label="truth", c="black", ls="--")
-            for name, value in estimated.items():
-                ax.plot(self.shift_values, value, label=name)
-            ax.set_xlabel("shift")
-            ax.set_ylabel("srf")
-            ax.legend()
-            self.logger.experiment.add_figure(f"{part}/fig", fig, ep)
+            if hasattr(self.logger, "experiment"):
+                # plot srf vs truth
+                fig, ax = plt.subplots()
+                ax.plot(self.shift_values, truth, label="truth", c="black", ls="--")
+                for name, value in estimated.items():
+                    ax.plot(self.shift_values, value, label=name)
+                ax.set_xlabel("shift")
+                ax.set_ylabel("srf")
+                ax.legend()
+                self.logger.experiment.add_figure(f"{part}/fig", fig, ep)
 
         if self.estimator is not None:
             estimator = getattr(self, f"srf_estimator_{part}")

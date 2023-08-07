@@ -1,5 +1,3 @@
 # @package _global_
 dataset:
   _target_: tresnet.datamodules.IHDPB
-training:
-  epochs: 200

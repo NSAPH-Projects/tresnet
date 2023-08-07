@@ -1,7 +1,7 @@
 defaults:
  - _self_
  - architecture: large
- - strategy: tresnet_clever
+ - strategy: tresnet-clever
  - training: batches
  - dataset: ihdp
  - optimizer: sgd
@@ -59,7 +59,7 @@ estimator: tr # ipw, aipw, outcome, tr
 estimator_ma_weight: 0.1  # in terms of epochs
 
 training:
-  epochs: 500
+  epochs: 200
   dropout: 0.0
   num_workers: 0
   tr_opt_freq: 20
@@ -70,10 +70,13 @@ training:
     decrease_lr_after: 1.0 # num. epochs after which decrease learning rate 1 = never
   plot_every: 0.1  # in terms of epochs  # 0 = always
   progbar: true
-  csv_logger: false
   monitor: null  # choose a valid metric logged with lightning
   shuffle_batches: true
   grad_clip: 1.0  # value gradient clipping
+
+loggers:
+  csv: false
+  tb: true
 
 compile: false
 family: gaussian  # gaussian, poisson, bernoulli:

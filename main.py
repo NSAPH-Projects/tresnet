@@ -110,8 +110,8 @@ def main(args: DictConfig) -> None:
         version="",  # , if args.clean else None,
         default_hp_metric=False,
     )
-    loggers = [tb_logger]
-    if args.training.csv_logger:
+    loggers = [tb_logger] if args.loggers.tb else []
+    if args.loggers.csv:
         csv_logger = CSVLogger(
             save_dir=".",
             name=tb_logger.log_dir,
@@ -142,6 +142,7 @@ def main(args: DictConfig) -> None:
         check_val_every_n_epoch=min(1, args.training.epochs // 100),
         logger=loggers,
         enable_progress_bar=args.training.progbar,
+        enable_checkpointing=False,
     )
     trainer.fit(model, datamodule)
 

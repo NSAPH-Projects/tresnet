@@ -2,6 +2,8 @@
 # Logs
 lightning_logs
 logs
+.snakemake
+checkpoints/
 
 # Local ignores for Dimeji
 !dataset/tcga/create_synthetic_TCGA.ipynb

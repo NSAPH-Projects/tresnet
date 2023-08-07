@@ -4,5 +4,3 @@ dataset:
   noise_scale: 0.1
   data_opts:
     dosage_variant: 2
-training:
-  epochs: 200

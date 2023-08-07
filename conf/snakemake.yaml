@@ -1,14 +1,15 @@
 experiment: ???
+use_srun: false
 exp1:
   strategies:
-    - tresnet_clever
-    - tresnet_clever_reg
-    - aipw_classifier
-    - tmle_clever
+    - tresnet-clever
+    - tresnet-clever-reg
+    - aipw
+    - tmle-clever
     - tarnet
   backbones:
     - vc
-    - mlp
+    - causalmlp
   architectures:
     - small
     - large

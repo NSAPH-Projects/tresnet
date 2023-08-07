@@ -1,3 +1,15 @@
+# python command when in sbatch
+conda: "requirements.yaml"
+
+
+python_cmd = "srun -n 1 -c 1 python" if config["use_srun"] else "python"
+
+
+# add a directive to exclude _ from wildcard matching
+wildcard_constraints:
+    sample="[a-zA-Z0-9-]+",
+
+
 rule exp1_all:
     """
     The purpose of this rule is to assess whether or not the targeted regularization
@@ -17,12 +29,20 @@ rule exp1_all:
 
 rule exp1_impl:
     output:
-        "logs/exp1/gaussian/{seed}/{dset}_{arch}_{strat}/srf_estimates.csv",
+        "logs/exp1/gaussian/{seed}/{dset}_{arch}_{strat}_{bb}/srf_estimates.csv",
     log:
-        err="logs/exp1/gaussian/{seed}/{dset}_{arch}_{strat}/stderr.log",
+        err="logs/exp1/gaussian/{seed}/{dset}_{arch}_{strat}_{bb}/stderr.log",
     shell:
-        """
-        python main.py dataset={wildcards.dset} architecture={wildcards.arch}\
-          strategy={wildcards.strat} seed={wildcards.seed} logdir=logs/exp1\
-          subdir="" &2> {log.err}
-        """
+        f"{python_cmd} main.py"
+        " dataset={wildcards.dset}"
+        " architecture={wildcards.arch}"
+        " strategy={wildcards.strat}"
+        " seed={wildcards.seed}"
+        " outcome.backbone={wildcards.bb}"
+        " logdir=logs/exp1"
+        ' subdir=""'
+        " loggers.tb=false"
+        " training.progbar=false"
+        " &2> {log.err}"
+        " && wait"
+        # ^ note! without this, it exits early and fails

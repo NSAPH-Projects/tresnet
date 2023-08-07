@@ -106,7 +106,6 @@ class Poisson(GLMFamily):
         super().__init__()
         self.off = offset
 
-
     def link(self, x: Tensor) -> Tensor:
         return torch.exp(x + self.off)
 
@@ -124,8 +123,10 @@ class Poisson(GLMFamily):
         min=-7,
         max=7,
     ) -> Tensor:
-        lp =  linear_predictor.clamp(linear_predictor + self.off).clamp(min=-7, max=7)
-        return F.poisson_nll_loss(lp, target, log_input=True, reduction=reduction, full=True)
+        lp = linear_predictor.clamp(linear_predictor + self.off).clamp(min=-7, max=7)
+        return F.poisson_nll_loss(
+            lp, target, log_input=True, reduction=reduction, full=True
+        )
 
     def sampler(self, generator: torch.Generator) -> callable:
         return lambda l: torch.poisson(torch.exp(l), generator=generator)
