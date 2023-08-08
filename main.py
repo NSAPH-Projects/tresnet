@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
+from lightning.pytorch.plugins.environments import SLURMEnvironment
 from omegaconf import DictConfig
 
 from tresnet import Tresnet, glms, shifts
@@ -143,6 +144,7 @@ def main(args: DictConfig) -> None:
         logger=loggers,
         enable_progress_bar=args.training.progbar,
         enable_checkpointing=False,
+        plugins=[SLURMEnvironment(auto_requeue=False)],
     )
     trainer.fit(model, datamodule)
 

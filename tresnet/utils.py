@@ -80,7 +80,9 @@ def benchmarks_from_dir(root_dir: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         .rank(ascending=False)
         .test_mse
     )
-    ranks = curve_train_mse.merge(curve_test_mse, on=["dataset", "family", "seed", "experiment"])
+    ranks = curve_train_mse.merge(
+        curve_test_mse, on=["dataset", "family", "seed", "experiment"]
+    )
 
     # compute ROC by dataset from rankings
     # roc_train = curve_train_mse.groupby(

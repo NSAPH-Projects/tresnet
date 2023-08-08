@@ -53,10 +53,10 @@ experiments:
 
   exp3:  # comparison of density learning strategyes
     strategies:
-      - ipw_classifier
-      - ipw_ps
-      - ipw_hybrid
-      - ipw_multips
+      - ipw-classifier
+      - ipw-ps
+      - ipw-hybrid
+      - ipw-multips
     backbones:
       - vc
     architectures:

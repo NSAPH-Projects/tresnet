@@ -3,7 +3,12 @@ assert "experiment" in config, "experiment must be specified with -C experiment=
 
 exp = config["experiment"]
 params = config["experiments"][exp]
-python_cmd = "srun -n 1 -c 1 python" if config["use_srun"] else "python"
+python_cmd = "srun -n 1 python" if config["use_srun"] else "python"
+
+
+# a rule to make to exclude _ from wildcard pattern matching
+wildcard_constraints:
+    sample="[a-zA-Z0-9-]+",
 
 
 rule all:
@@ -31,8 +36,15 @@ rule impl:
         err=f"logs/{exp}/gaussian/" "{seed}/{dset}_{arch}_{strat}_{bb}/stderr.log",
     conda:
         "requirements.yaml"
+    # set resources to only use one core per task
+    resources:
+        cpus=1,
+        tasks=1,
+        cpus_per_task=1,
+        nodes=1,
     shell:
-        f"{python_cmd} main.py"
+        # f"{python_cmd} main.py"
+        "python main.py"
         " dataset={wildcards.dset}"
         " architecture={wildcards.arch}"
         " strategy={wildcards.strat}"
