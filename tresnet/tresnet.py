@@ -491,6 +491,8 @@ class Tresnet(pl.LightningModule):
                 w_tr = w_tr / w.mean(0, keepdim=True)
             fluct = fluct.T  #  in erf, fluct is over batch dim
             loss_wts = w_tr
+            if self.tr_clever:
+                fluct = w_tr * fluct
         else:
             if self.tr_clever:
                 fluct = w * fluct

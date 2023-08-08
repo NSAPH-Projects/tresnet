@@ -22,6 +22,8 @@ class SimN(TresnetDataModule, pl.LightningDataModule):
             + 2 * x5
             - 6.5
         )
+        # standardize logits
+        logits = logits.mean() + (logits - logits.mean()) / logits.std()
         t = (logits + self.noise_scale * torch.randn(n)).sigmoid()
 
         self.treatment = t
