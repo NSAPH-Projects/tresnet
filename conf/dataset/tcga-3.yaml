@@ -6,4 +6,3 @@ dataset:
   noise_scale: 0.25
 training:
   epochs: 200
-  dropout: 0.0

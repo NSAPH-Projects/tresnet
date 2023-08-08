@@ -1,2 +1,5 @@
-_target_: tresnet.datamodules.News
-noise_scale: 0.25
+# @package _global_
+dataset:
+  _target_: tresnet.datamodules.News
+training:
+  epochs: 200

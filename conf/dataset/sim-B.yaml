@@ -1,1 +1,3 @@
-_target_: tresnet.datamodules.SimB
+# @package _global_
+dataset:
+  _target_: tresnet.datamodules.SimB

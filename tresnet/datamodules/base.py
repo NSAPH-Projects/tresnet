@@ -79,7 +79,7 @@ class TresnetDataModule(pl.LightningDataModule):
             if isinstance(self.family, glms.Bernoulli):
                 m, M = -10, 10
             elif isinstance(self.family, glms.Gaussian):
-                m, M = -100, 100
+                m, M = -5, 5
             elif isinstance(self.family, glms.Poisson):
                 m, M = 0, 10
             else:

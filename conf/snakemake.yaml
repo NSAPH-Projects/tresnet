@@ -5,16 +5,17 @@ experiments:
   exp1:  # does targeting work?
     strategies:
       - tresnet-clever
-      - tresnet-clever-reg
       - aipw
       - tmle-clever
       - tarnet
+      - outcome
+      - ipw_classifier
     backbones:
       - vc
-      - causalmlp
+      # - causalmlp
     architectures:
       - small
-      - large
+      # - large
     datasets:
       - ihdp
       - ihdp-B
@@ -81,7 +82,6 @@ experiments:
       - tresnet-clever-splines
     backbones:
       - vc
-      - causalmlp
     architectures:
       - small
       - large
@@ -98,6 +98,59 @@ experiments:
     families:
       - gaussian
 
+  fix_exp2:
+    strategies:
+      - tresnet-clever
+      - tresnet-clever-ps
+      - vcnet
+    backbones:
+      - vc
+    architectures:
+      - small
+      # - large
+    datasets:
+      - ihdp
+      - ihdp-B
+      - news
+    num_seeds: 30
+    families:
+      - gaussian
+
+  fix2_exp2:
+    strategies:
+      - tresnet-clever-ps
+      - vcnet
+    backbones:
+      - vc
+    architectures:
+      - large
+    datasets:
+      - ihdp
+      - news
+      - sim-B
+      - sim-N
+    num_seeds: 48
+    families:
+      - gaussian
+    shift_max: 0.5
+
+  fix3_exp2:
+    strategies:
+      - tresnet-clever-ps
+      - vcnet
+    backbones:
+      - vc
+    architectures:
+      - large
+    datasets:
+      - ihdp
+      - news
+      - sim-B
+      - sim-N
+    num_seeds: 48
+    families:
+      - gaussian
+    shift_max: 0.75
 
 
 logdir: logs

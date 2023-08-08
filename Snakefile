@@ -3,6 +3,7 @@ assert "experiment" in config, "experiment must be specified with -C experiment=
 
 exp = config["experiment"]
 params = config["experiments"][exp]
+shift_max = params.get("shift_max", 0.25)
 
 
 # a rule to make to exclude _ from wildcard pattern matching
@@ -53,6 +54,7 @@ rule impl:
         ' subdir=""'
         " loggers.tb=false"
         " training.progbar=false"
+        f" shift.max={shift_max}"
         " &2> {log.err}"
         " && wait"
         # ^ note! without this, it exits early and fails

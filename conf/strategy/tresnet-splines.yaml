@@ -1,8 +1,0 @@
-# @package _global_
-tr:
-  clever: true
-  consistency: 0.0
-  type: splines
-estimator: tr
-treatment:
-  norm_weight: 0.0
