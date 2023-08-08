@@ -3,7 +3,6 @@ assert "experiment" in config, "experiment must be specified with -C experiment=
 
 exp = config["experiment"]
 params = config["experiments"][exp]
-python_cmd = "srun -n 1 python" if config["use_srun"] else "python"
 
 
 # a rule to make to exclude _ from wildcard pattern matching
