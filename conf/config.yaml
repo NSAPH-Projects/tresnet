@@ -14,7 +14,7 @@ shift:
   type: percent  # percent,
   num: 10
   min: 0.0
-  max: 0.25
+  max: 0.75
 
 body:
   hidden_dim: ???
