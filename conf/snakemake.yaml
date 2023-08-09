@@ -1,24 +1,23 @@
 experiment:
 strategy:
 
-strategies:
-  - tresnet-clever
-  - tresnet-clever-splines
-  - tresnet-clever-ps
-  - tresnet-clever-telescope
-  - vcnet
-  - aipw
-  - tarnet
-  - outcome
-  - ipw-telescope
-  - ipw-classifier
-  - ipw-ps
-  - ipw-hybrid
-  - ipw-multips
-  - tmle-clever
-
 experiments:
   exp1:
+    strategies:
+      - tresnet-clever
+      - tresnet-clever-splines
+      - tresnet-clever-ps
+      - tresnet-clever-telescope
+      - vcnet
+      - aipw
+      - tarnet
+      - outcome
+      - ipw-telescope
+      - ipw-classifier
+      - ipw-ps
+      - ipw-hybrid
+      - ipw-multips
+      - tmle-clever
     backbones:
       - vc
     architectures:
@@ -35,6 +34,54 @@ experiments:
     num_seeds: 96
     families:
       - gaussian
+
+  exp2:
+    strategies:
+      - tresnet-clever
+      - vcnet
+      - aipw
+      - outcome
+    backbones:  
+      - causalmlp
+      - piecewise
+    architectures:
+      - large
+    datasets:
+      - ihdp
+      - ihdp-B
+      - news
+      - sim-B
+      - sim-N
+      - tcga-1
+      - tcga-2
+      - tcga-3
+    num_seeds: 96
+    families:
+      - gaussian
+
+  exp3:
+    strategies:
+      - tresnet-clever
+      - tresnet-clever-forcemse
+      - outcome
+      - outcome-forcemse
+    backbones:  
+      - vc
+    architectures:
+      - large
+    datasets:
+      - ihdp
+      - ihdp-B
+      - news
+      - sim-B
+      - sim-N
+      - tcga-1
+      - tcga-2
+      - tcga-3
+    num_seeds: 96
+    families:
+      - poisson
+      - binomial
 
   # exp1b:  # does targeting work?
   #   strategies:

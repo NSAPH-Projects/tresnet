@@ -5,4 +5,4 @@ tr:
 estimator: tr
 treatment:
   norm_weight: 0.0
-  loss: telescope
+force_mse: true
