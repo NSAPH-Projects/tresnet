@@ -12,3 +12,4 @@ body:
 training:
   finetune:
     freeze_nuisance: true
+  tr_opt_freq: 1

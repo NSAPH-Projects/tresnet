@@ -88,7 +88,11 @@ dataset:
 
 logdir: logs
 subdir: ${now:%Y-%m-%d_%H-%M-%S}
-choices: ${hydra.runtime.choices.dataset}_${hydra.runtime.choices.architecture}_${hydra.runtime.choices.strategy}
+choices:
+  strategy: ${hydra.runtime.choices.strategy}
+  architecture: ${hydra.runtime.choices.architecture}
+  dataset: ${hydra.runtime.choices.dataset}
+
 hydra:
   run:
-    dir: ${logdir}/${family}/${seed}/${choices}_${outcome.backbone}/${subdir}
+    dir: ${logdir}/${choices.dataset}_${family}/${choices.strategy}_${outcome.backbone}_${choices.architecture}/${seed}/${subdir}

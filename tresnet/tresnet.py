@@ -466,13 +466,13 @@ class Tresnet(pl.LightningModule):
         )
         self.lp = self.outcome.lp
         losses["mean_error"] = errors.mean()
-        # if self.outcome_freeze:
-        #     losses["outcome"] = losses["outcome"].detach()
+        if self.outcome_freeze:
+            losses["outcome"] = losses["outcome"].detach()
 
         # 2. ratio loss
         losses["ratio"] = self.ratio.loss(treatment, features_treat)
-        # if self.ratio_freeze:
-        #     losses["ratio"] = losses["ratio"].detach()
+        if self.ratio_freeze:
+            losses["ratio"] = losses["ratio"].detach()
 
         # combine ratio and outcome
         # losses["ratio_outcome"] = losses["ratio"] + losses["outcome"]
@@ -541,8 +541,10 @@ class Tresnet(pl.LightningModule):
             with torch.no_grad():
                 losses["tr_mean_error"] = (w_tr * errors).mean()
 
-        # if not self.tr:
-        #     losses["tr"] = losses["tr"].detach()
+        if not self.tr:
+            # do not comment this. It's needed so that the tarnet
+            # does not learn from the tr loss
+            losses["tr"] = losses["tr"].detach()
 
         # 4. estimators per batch
         with torch.no_grad():

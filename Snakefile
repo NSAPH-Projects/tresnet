@@ -1,9 +1,12 @@
 assert len(config) > 0, "config must be specified with -configfile conf/snakemake.yaml"
 assert "experiment" in config, "experiment must be specified with -C experiment=..."
 
+print(config)
+
 exp = config["experiment"]
+strat = config["strategy"]
+
 params = config["experiments"][exp]
-shift_max = params.get("shift_max", 0.25)
 
 
 # a rule to make to exclude _ from wildcard pattern matching
@@ -19,21 +22,22 @@ rule all:
     """
     input:
         expand(
-            f"logs/{exp}/gaussian/"
-            "{seed}/{dset}_{arch}_{strat}_{bb}/srf_estimates.csv",
+            "logs/{exp}/{dset}_{family}/{strat}_{bb}_{arch}/{seed}/srf_estimates.csv",
+            exp=[exp],
+            family=params["families"],
             seed=list(range(params["num_seeds"])),
             dset=params["datasets"],
             arch=params["architectures"],
-            strat=params["strategies"],
+            strat=[strat],
             bb=params["backbones"],
         ),
 
 
 rule impl:
     output:
-        f"logs/{exp}/gaussian/" "{seed}/{dset}_{arch}_{strat}_{bb}/srf_estimates.csv",
+        "logs/{exp}/{dset}_{family}/{strat}_{bb}_{arch}/{seed}/srf_estimates.csv",
     log:
-        err=f"logs/{exp}/gaussian/" "{seed}/{dset}_{arch}_{strat}_{bb}/stderr.log",
+        err="logs/{exp}/{dset}_{family}/{strat}_{bb}_{arch}/{seed}/err.log",
     conda:
         "requirements.yaml"
     # set resources to only use one core per task
@@ -50,11 +54,10 @@ rule impl:
         " strategy={wildcards.strat}"
         " seed={wildcards.seed}"
         " outcome.backbone={wildcards.bb}"
-        f" logdir=logs/{exp}"
+        " logdir=logs/{wildcards.exp}"
         ' subdir=""'
         " loggers.tb=false"
         " training.progbar=false"
-        f" shift.max={shift_max}"
         " &2> {log.err}"
         " && wait"
-        # ^ note! without this, it exits early and fails
+        # ^ note! without explicit 'wait', it exits early and fails

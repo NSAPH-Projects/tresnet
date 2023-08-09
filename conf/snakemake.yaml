@@ -1,85 +1,24 @@
 experiment:
-use_srun: false
+strategy:
+
+strategies:
+  - tresnet-clever
+  - tresnet-clever-splines
+  - tresnet-clever-ps
+  - tresnet-clever-telescope
+  - vcnet
+  - aipw
+  - tarnet
+  - outcome
+  - ipw-telescope
+  - ipw-classifier
+  - ipw-ps
+  - ipw-hybrid
+  - ipw-multips
+  - tmle-clever
 
 experiments:
-  exp1:  # does targeting work?
-    strategies:
-      - tresnet-clever
-      - aipw
-      - tmle-clever
-      - tarnet
-      - outcome
-      - ipw_classifier
-    backbones:
-      - vc
-      # - causalmlp
-    architectures:
-      - small
-      # - large
-    datasets:
-      - ihdp
-      - ihdp-B
-      - news
-      - sim-B
-      - sim-N
-      - tcga-1
-      - tcga-2
-      - tcga-3
-    num_seeds: 30
-    families:
-      - gaussian
-
-  exp2:  # comparison with vcnet
-    strategies:
-      - tresnet-clever
-      - tresnet-clever-ps
-      - vcnet
-    backbones:
-      - vc
-    architectures:
-      - small
-      - large
-    datasets:
-      - ihdp
-      - ihdp-B
-      - news
-      - sim-B
-      - sim-N
-      - tcga-1
-      - tcga-2
-      - tcga-3
-    num_seeds: 30
-    families:
-      - gaussian
-
-  exp3:  # comparison of density learning strategyes
-    strategies:
-      - ipw-classifier
-      - ipw-ps
-      - ipw-hybrid
-      - ipw-multips
-    backbones:
-      - vc
-    architectures:
-      - small
-      - large
-    datasets:
-      - ihdp
-      - ihdp-B
-      - news
-      - sim-B
-      - sim-N
-      - tcga-1
-      - tcga-2
-      - tcga-3
-    num_seeds: 30
-    families:
-      - gaussian
-
-  exp4:  # comparison of density learning strategyes
-    strategies:
-      - tresnet-clever
-      - tresnet-clever-splines
+  exp1:
     backbones:
       - vc
     architectures:
@@ -93,64 +32,213 @@ experiments:
       - tcga-1
       - tcga-2
       - tcga-3
-    num_seeds: 48
+    num_seeds: 96
     families:
       - gaussian
 
-  fix_exp2:
-    strategies:
-      - tresnet-clever
-      - tresnet-clever-ps
-      - vcnet
-    backbones:
-      - vc
-    architectures:
-      - small
-      # - large
-    datasets:
-      - ihdp
-      - ihdp-B
-      - news
-    num_seeds: 48
-    families:
-      - gaussian
-
-  fix2_exp2:
-    strategies:
-      - tresnet-clever-ps
-      - vcnet
-    backbones:
-      - vc
-    architectures:
-      - large
-    datasets:
-      # - ihdp
-      # - news
-      # - sim-B
-      - sim-N
-    num_seeds: 48
-    families:
-      - gaussian
-    shift_max: 0.5
-
-  fix3_exp2:
-    strategies:
-      - tresnet-clever-ps
-      - vcnet
-    backbones:
-      - vc
-    architectures:
-      - large
-    datasets:
-      - ihdp
-      # - tcga-2
-      # - tcga-3
-    num_seeds: 48
-    families:
-      - gaussian
-    shift_max: 0.5
+  # exp1b:  # does targeting work?
+  #   strategies:
+  #     - tmle-clever
+  #     - outcome
+  #   backbones:
+  #     - vc
+  #   architectures:
+  #     - large
+  #   datasets:
+  #     - ihdp
+  #     - news
+  #     - sim-B
+  #     - sim-N
+  #     - tcga-1
+  #     - tcga-2
+  #     - tcga-3
+  #   num_seeds: 30
+  #   families:
+  #     - gaussian
 
 
+# experiments:
+#   exp1a:  # does targeting work?
+#     strategies:
+#       - tresnet-clever
+#     backbones:
+#       - vc
+#     architectures:
+#       - large
+#     datasets:
+#       - ihdp
+#       - news
+#       - sim-B
+#       - sim-N
+#       - tcga-1
+#       - tcga-2
+#       - tcga-3
+#     num_seeds: 30
+#     families:
+#       - gaussian
 
-logdir: logs
-subdir: ""  # this forces overwriting of logs instead of adding a per day/hour log
+#   exp1b:  # does targeting work?
+#     strategies:
+#       - tmle-clever
+#       - outcome
+#     backbones:
+#       - vc
+#     architectures:
+#       - large
+#     datasets:
+#       - ihdp
+#       - news
+#       - sim-B
+#       - sim-N
+#       - tcga-1
+#       - tcga-2
+#       - tcga-3
+#     num_seeds: 30
+#     families:
+#       - gaussian
+
+#   exp1b:  # does targeting work?
+#     strategies:
+#       - tarnet
+#       - aipw
+#     backbones:
+#       - vc
+#     architectures:
+#       - large
+#     datasets:
+#       - ihdp
+#       - news
+#       - sim-B
+#       - sim-N
+#       - tcga-1
+#       - tcga-2
+#       - tcga-3
+#     num_seeds: 30
+#     families:
+#       - gaussian
+
+#   exp2a:
+#     strategies:
+#       - tresnet-clever-ps
+#       - vcnet
+#     backbones:
+#       - vc
+#     architectures:
+#       - large
+#     datasets:
+#       - ihdp
+#       - news
+#       - sim-B
+#       - sim-N
+#       - tcga-1
+#       - tcga-2
+#       - tcga-3
+#     num_seeds: 48
+#     families:
+#       - gaussian
+
+#   exp2b:
+#     strategies:
+#       - tresnet-clever-ps
+#       - vcnet
+#     backbones:
+#       - vc
+#     architectures:
+#       - large
+#     datasets:
+#       - ihdp
+#       - news
+#       - sim-B
+#       - sim-N
+#       - tcga-1
+#       - tcga-2
+#       - tcga-3
+#     num_seeds: 48
+#     families:
+#       - gaussian
+
+
+#   exp3a:  # comparison of density learning strategyes
+#     strategies:
+#       - ipw-telescope
+#       - ipw-classifier
+#     backbones:
+#       - vc
+#     architectures:
+#       - large
+#     datasets:
+#       - ihdp
+#       - news
+#       - sim-B
+#       - sim-N
+#       - tcga-1
+#       - tcga-2
+#       - tcga-3
+#     num_seeds: 48
+#     families:
+#       - gaussian
+
+#   exp3b:  # comparison of density learning strategyes
+#     strategies:
+#       - ipw-ps
+#       - ipw-hybrid
+#       - ipw-multips
+#     backbones:
+#       - vc
+#     architectures:
+#       - large
+#     datasets:
+#       - ihdp
+#       - news
+#       - sim-B
+#       - sim-N
+#       - tcga-1
+#       - tcga-2
+#       - tcga-3
+#     num_seeds: 48
+#     families:
+#       - gaussian
+
+#   exp4:  # comparison of density learning strategyes
+#     strategies:
+#       - tresnet-clever-splines
+#     backbones:
+#       - vc
+#     architectures:
+#       - large
+#     datasets:
+#       - ihdp
+#       - ihdp-B
+#       - news
+#       - sim-B
+#       - sim-N
+#       - tcga-1
+#       - tcga-2
+#       - tcga-3
+#     num_seeds: 48
+#     families:
+#       - gaussian
+
+#   exp5:  # comparison of density learning strategyes
+#     strategies:
+#       - tresnet-clever-telescope
+#     backbones:
+#       - vc
+#     architectures:
+#       - large
+#     datasets:
+#       - ihdp
+#       - ihdp-B
+#       - news
+#       - sim-B
+#       - sim-N
+#       - tcga-1
+#       - tcga-2
+#       - tcga-3
+#     num_seeds: 48
+#     families:
+#       - gaussian
+
+
+# logdir: logs
+# subdir: ""  # this forces overwriting of logs instead of adding a per day/hour log

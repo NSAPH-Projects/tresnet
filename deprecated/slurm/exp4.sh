@@ -9,4 +9,4 @@
 #SBATCH --mail-type=ALL
 
 # rm -rf .snakemake/locks/*
-snakemake -F --rerun-incomplete --nolock --cores 48 --configfile conf/snakemake.yaml -C experiment=exp4
+snakemake --rerun-incomplete --nolock --cores 48 --configfile conf/snakemake.yaml -C experiment=exp4
