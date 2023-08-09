@@ -2,6 +2,7 @@
 
 strategies=("tresnet-clever"
             "tresnet-clever-forcemse"
+            "tresnet-clever-telescope"
             "outcome"
             "outcome-forcemse")
 

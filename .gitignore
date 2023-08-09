@@ -12,6 +12,7 @@ checkpoints/
 simu1/
 data/
 data_medicare/
+results.csv
 
 # Local for mauricio; just accept notebooks in this folder
 # !notebooks/*.ipynb

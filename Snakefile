@@ -54,6 +54,7 @@ rule impl:
         " strategy={wildcards.strat}"
         " seed={wildcards.seed}"
         " outcome.backbone={wildcards.bb}"
+        " family={wildcards.family}"
         " logdir=logs/{wildcards.exp}"
         ' subdir=""'
         " loggers.tb=false"

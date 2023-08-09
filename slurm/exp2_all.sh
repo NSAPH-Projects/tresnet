@@ -1,8 +1,10 @@
 #! /bin/bash
 
 strategies=("tresnet-clever"
+            "tresnet-clever-ps"
             "vcnet"
             "aipw"
+            "aipw-ps"
             "outcome")
 
 for strat in "${strategies[@]}"; do
