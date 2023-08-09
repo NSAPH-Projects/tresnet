@@ -48,6 +48,11 @@ class TresnetDataModule(pl.LightningDataModule):
         self.gen_split_train_val()
         self.generate_outcome_and_counterfactuals()
 
+        # add offset if Poisson case
+        if isinstance(self.family, glms.Poisson):
+            self.family.off = torch.log(self.outcome.mean())
+            # self.family.scale = torch.log(1e-3 + self.outcome).std()
+
 
     @abstractmethod
     def linear_predictor(
@@ -81,7 +86,7 @@ class TresnetDataModule(pl.LightningDataModule):
             elif isinstance(self.family, glms.Gaussian):
                 m, M = -5, 5
             elif isinstance(self.family, glms.Poisson):
-                m, M = 0, 10
+                m, M = 0, 7
             else:
                 raise ValueError(f"Unknown family {self.family}")
             lp = m + (M - m) * ((lp - lp_min) / (lp_max - lp_min))

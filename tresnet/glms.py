@@ -107,7 +107,7 @@ class Poisson(GLMFamily):
         self.off = offset
 
     def link(self, x: Tensor) -> Tensor:
-        return torch.exp(x + self.off)
+        return torch.exp((x + self.off).clamp(min=-7, max=10))
 
     def inverse_link(self, x: Tensor) -> Tensor:
         # y = torch.log(x + 1e-6)
@@ -123,7 +123,7 @@ class Poisson(GLMFamily):
         min=-7,
         max=7,
     ) -> Tensor:
-        lp = linear_predictor.clamp(linear_predictor + self.off).clamp(min=-7, max=7)
+        lp = (linear_predictor + self.off).clamp(min=-7, max=10)
         return F.poisson_nll_loss(
             lp, target, log_input=True, reduction=reduction, full=True
         )

@@ -583,7 +583,7 @@ class Tresnet(pl.LightningModule):
 
         # check if ther eis any nan in any of the losses
         for k, v in losses.items():
-            if torch.isnan(v).any():
+            if torch.isnan(v).any() or torch.isinf(v).any():
                 LOGGER.error(f"NaN in loss {k}")
                 raise Exception(f"NaN in loss {k}")
 
