@@ -252,7 +252,7 @@ class Tresnet(pl.LightningModule):
         tr: bool = True,
         tr_spline_degree: int = 2,
         tr_spline_knots: list[float] = list(np.linspace(0, 1, num=10)[1:-1]),
-        tr_param_type: Literal["discrete", "spline"] = "discrete",
+        tr_param_type: Literal["discrete", "splines"] = "discrete",
         tr_opt_freq: int = 100,
         tr_clever: bool = True,
         tr_loss_weight: float = 0.1,
@@ -359,7 +359,7 @@ class Tresnet(pl.LightningModule):
         # make fluctuation model
         if tr_param_type == "discrete":
             self.tr_model = nn.Parameter(torch.zeros(len(shift_values)))
-        elif tr_param_type == "spline":
+        elif tr_param_type == "splines":
             self.tr_model = layers.SplineFluctuation(tr_spline_degree, tr_spline_knots)
         elif tr_param_type == "erf":
             self.tr_model = layers.SplineFluctuation(tr_spline_degree, tr_spline_knots)
@@ -398,7 +398,7 @@ class Tresnet(pl.LightningModule):
         if not self.tr or self.tr_tmle:
             if self.tr_param_type == "discrete":
                 self.tr_model.requires_grad_(False)
-            elif self.tr_param_type in ("spline", "erf"):
+            elif self.tr_param_type in ("splines", "erf"):
                 for param in self.tr_model.parameters():
                     param.requires_grad_(False)
 
@@ -408,7 +408,7 @@ class Tresnet(pl.LightningModule):
     def fluct_param(self, treatment: Tensor | None = None) -> Tensor:
         if self.tr_param_type == "discrete":
             eps = self.tr_model
-        elif self.tr_param_type == "spline":
+        elif self.tr_param_type == "splines":
             eps = self.tr_model(self.shift_values)
         elif self.tr_param_type == "erf":
             eps = self.tr_model(treatment)
@@ -763,7 +763,7 @@ class Tresnet(pl.LightningModule):
         tr_opts = dict(weight_decay=0.0)
         if self.tr_param_type == "discrete":
             tr_group.append(dict(params=[self.tr_model], lr=0.1, **tr_opts))
-        elif self.tr_param_type in ("spline", "erf"):
+        elif self.tr_param_type in ("splines", "erf"):
             tr_group.append(dict(params=self.tr_model.parameters(), lr=0.1, **tr_opts))
 
         # param_groups.append(tr_group[0])
