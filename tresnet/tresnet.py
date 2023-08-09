@@ -100,7 +100,7 @@ class RatioHead(nn.Module):
     def __init__(
         self,
         shift_values: list[float],
-        ratio_loss: Literal["ps", "hybrid", "multips", "classifier"],
+        ratio_loss: Literal["ps", "hybrid", "multips", "classifier", "telescope"],
         shift: shifts.Shift,
         in_dim: int,
         ratio_grid_size: int,
@@ -131,7 +131,7 @@ class RatioHead(nn.Module):
                 self.multips.append(
                     layers.DiscreteDensityEstimator(in_dim, ratio_grid_size)
                 )
-        elif ratio_loss == "classifier":
+        elif ratio_loss in ("classifier", "telescope"):
             # classifier with num_shifts heads
             args = [in_dim, 1, ratio_spline_degree, ratio_spline_knots]
             self.class_logits = nn.ModuleList(
@@ -177,15 +177,15 @@ class RatioHead(nn.Module):
             numerator = torch.log(ps_shift + 1e-6)
             denominator = torch.log(ps_obs + 1e-6)
             log_ratio = numerator - denominator
-        elif self.ratio_loss == "classifier":
+        elif self.ratio_loss in ("classifier", "telescope"):
             log_ratio = []
             for i in range(len(self.shift_values)):
                 inputs = torch.cat([treatment[:, i, None], features], 1)
                 log_ratio.append(self.class_logits[i](inputs))
-            log_ratio = torch.cat(log_ratio, 1)
-
-            # use a tanh filter
-            log_ratio = 3.0 * torch.tanh(0.5 * log_ratio.clamp(-6, 6))
+            log_ratio = 0.5 * torch.cat(log_ratio, 1)  # 0.1 for inductive bias
+            log_ratio = 3.0 * torch.tanh((log_ratio).clamp(-3, 3))
+            if self.ratio_loss == "telescope":
+                log_ratio = torch.cumsum(log_ratio, dim=1)
 
         return log_ratio
 
@@ -219,6 +219,33 @@ class RatioHead(nn.Module):
             logits = torch.cat([ratio2, ratio1])
             tgts = torch.cat([torch.zeros_like(ratio2), torch.ones_like(ratio1)])
             tgts = tgts.clamp(self.label_smoothing / 2, 1 - self.label_smoothing / 2)
+            loss_ = F.binary_cross_entropy_with_logits(logits, tgts)
+        elif self.ratio_loss == "telescope":
+            # telescope loss
+            shifted = self.shift(treatment[:, None], self.shift_values[None, :])
+            # eval for each shift
+            logits_zeros = []
+            logits_ones = []
+            for i in range(len(self.shift_values)):
+                if i == 0:
+                    inputs_zeros = torch.cat([treatment[:, None], features], 1)
+                else:
+                    inputs_zeros = torch.cat([shifted[:, i - 1, None], features], 1)
+                inputs_ones = torch.cat([shifted[:, i, None], features], 1)
+                logits_zeros.append(self.class_logits[i](inputs_zeros))
+                logits_ones.append(self.class_logits[i](inputs_ones))
+
+            # make sure the tanh operation here is compatible with forward method!
+            logits_zeros = 0.5 * torch.cat(logits_zeros, 1)
+            logits_ones = 0.5 * torch.cat(logits_ones, 1)
+            logits_zeros = 3.0 * torch.tanh(logits_zeros.clamp(-3, 3))
+            logits_ones = 3.0 * torch.tanh(logits_ones.clamp(-3, 3))
+
+            tgts = torch.cat(
+                [torch.zeros_like(logits_zeros), torch.ones_like(logits_ones)]
+            )
+            tgts = tgts.clamp(self.label_smoothing / 2, 1 - self.label_smoothing / 2)
+            logits = torch.cat([logits_zeros, logits_ones])
             loss_ = F.binary_cross_entropy_with_logits(logits, tgts)
 
         return loss_
@@ -668,7 +695,7 @@ class Tresnet(pl.LightningModule):
             for m in self.modules():
                 if isinstance(m, nn.Dropout):
                     m.p = 0.0
-            
+
             self.tr_freq = 1
 
         self._on_end("train")
