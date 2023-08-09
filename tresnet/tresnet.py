@@ -616,11 +616,12 @@ class Tresnet(pl.LightningModule):
 
         # optimize
         # if not self.finetuning or not self.finetune_freeze_nuisance:
-        self.manual_backward(loss)
-        torch.nn.utils.clip_grad_value_(self.parameters(), self.grad_clip)
-        opt.step()
-        # else:
-        #     loss = loss.detach()
+        if not (self.tr_tmle and self.finetuning):
+            self.manual_backward(loss)
+            torch.nn.utils.clip_grad_value_(self.parameters(), self.grad_clip)
+            opt.step()
+        else:
+            loss = loss.detach()
 
         # save estimators of batch
         for k, v in estimators.items():
@@ -656,7 +657,7 @@ class Tresnet(pl.LightningModule):
 
         for _ in range(self.tr_freq):
             if self.tr:
-                if not self.tr_tmle or self.current_epoch > self.finetune_after:
+                if not self.tr_tmle or self.finetuning:
                     opt_tr.step(closure=closure)
 
         # log losses and return
