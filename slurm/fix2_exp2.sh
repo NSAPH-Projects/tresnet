@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -t 4:00:00
+#SBATCH -t 5:00:00
 #SBATCH --ntasks-per-node=48
 #SBATCH --mem 96G
 #SBATCH -p serial_requeue
