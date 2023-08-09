@@ -28,6 +28,7 @@ class OutcomeHead(nn.Module):
         config: layers.ModuleConfig,
         vc_spline_degree: int = 2,
         vc_spline_knots: list[float] = [0.33, 0.66],
+        piecewise_splits: int = 5,
         glm_family: glms.GLMFamily = glms.Gaussian(),
     ) -> None:
         super().__init__()
@@ -38,7 +39,7 @@ class OutcomeHead(nn.Module):
         elif outcome_type == "causalmlp":
             kwargs = dict()  # add dimension
         elif outcome_type == "piecewise":
-            kwargs = dict()
+            kwargs = dict(splits=piecewise_splits)
         else:
             raise NotImplementedError
         self.model = config.make_module(outcome_type, **kwargs)
@@ -266,6 +267,7 @@ class Tresnet(pl.LightningModule):
         outcome_spline_knots: list[float] = [0.33, 0.66],
         outcome_loss_weight: float = 1.0,
         outcome_training_noise: float = 0.0,
+        outcome_piecewise_splits: int = 5,
         glm_family: glms.GLMFamily = glms.Gaussian(),
         ratio_freeze: bool = False,
         ratio_loss: Literal["ps", "hybrid", "classifier", "multips"] = "ps",
@@ -368,6 +370,7 @@ class Tresnet(pl.LightningModule):
             config=outcome_config,
             vc_spline_degree=outcome_spline_degree,
             vc_spline_knots=outcome_spline_knots,
+            piecewise_splits=outcome_piecewise_splits,
             glm_family=glm_family,
         )
 
