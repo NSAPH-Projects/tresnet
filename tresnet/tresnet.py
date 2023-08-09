@@ -301,6 +301,7 @@ class Tresnet(pl.LightningModule):
         finetune_mask_ratio: float = 0.0,
         finetune_freeze_nuisance: bool = False,
         finetune_decrease_lr_after: int | None = None,
+        force_mse: bool = False,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -335,6 +336,7 @@ class Tresnet(pl.LightningModule):
         self.finetune_decrease_lr_after = finetune_decrease_lr_after
         self.grad_clip = grad_clip
         self.independent_encoders = independent_encoders
+        self.force_mse = force_mse
 
         # layer kwargs
         lkwargs = dict(
@@ -371,7 +373,7 @@ class Tresnet(pl.LightningModule):
             vc_spline_degree=outcome_spline_degree,
             vc_spline_knots=outcome_spline_knots,
             piecewise_splits=outcome_piecewise_splits,
-            glm_family=glm_family,
+            glm_family=glm_family if not self.force_mse else glms.Gaussian(),
         )
 
         # make ratio model
@@ -634,6 +636,7 @@ class Tresnet(pl.LightningModule):
         def closure():
             opt_tr.zero_grad()
             lp = self.lp.detach().clone()
+            glm_family = self.glm_family if not self.force_mse else glms.Gaussian()
             if self.tr_param_type != "erf":
                 w = self.w.detach().clone()
                 fluct = self.fluct_param(treatment).unsqueeze(0)
@@ -645,10 +648,10 @@ class Tresnet(pl.LightningModule):
 
             if self.tr_clever:
                 adj = lp + w * fluct
-                loss_tr = self.glm_family.loss(adj, outcome[:, None]).mean()
+                loss_tr = glm_family.loss(adj, outcome[:, None]).mean()
             else:
                 adj = lp + fluct
-                loss_tr = (w * self.glm_family.loss(adj, outcome[:, None])).mean()
+                loss_tr = (w * glm_family.loss(adj, outcome[:, None])).mean()
             self.manual_backward(loss_tr)
             if self.tr_param_type == "discrete":
                 torch.nn.utils.clip_grad_value_(self.tr_model, self.grad_clip)

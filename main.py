@@ -96,6 +96,7 @@ def main(args: DictConfig) -> None:
         finetune_decrease_lr_after=int(
             args.training.finetune.decrease_lr_after * args.training.epochs
         ),
+        force_mse=args.force_mse,
     )
     if args.compile:
         model = torch.compile(model)

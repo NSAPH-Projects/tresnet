@@ -80,7 +80,10 @@ loggers:
 
 compile: false
 family: gaussian  # gaussian, poisson, bernoulli:
-
+force_mse: false  # force mse loss for the outcome model
+                  # (useful for poisson and bernoulli outcomes)
+                  # if false, the loss is chosen automatically
+                  # based on the outcome family
 dataset:
   _target_: ???  # must point to the class to instantaite the dataset
   noise_scale: 0.25 
