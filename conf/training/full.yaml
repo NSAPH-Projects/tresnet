@@ -1,0 +1,3 @@
+batch_size: null
+epochs: 2000
+lr: 0.1

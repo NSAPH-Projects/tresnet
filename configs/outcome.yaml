@@ -1,4 +1,0 @@
-ratio_freeze: false
-tr: false
-estimator: outcome
-best_metric: val/outcome

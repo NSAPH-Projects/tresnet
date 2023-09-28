@@ -1,0 +1,4 @@
+# @package _global_
+tr:
+  freeze: true
+estimator: aipw

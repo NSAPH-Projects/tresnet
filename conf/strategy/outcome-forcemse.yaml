@@ -1,0 +1,14 @@
+# @package _global_
+estimator: outcome
+treatment:
+  freeze: true
+tr:
+  freeze: true
+training:
+  finetune:
+    freeze_nuisance: false
+body:
+  independent_encoders: true
+force_mse: true
+  # weight: 0.0
+# best_metric: val/outcome

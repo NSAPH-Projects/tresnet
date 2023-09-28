@@ -1,4 +1,0 @@
-outcome_freeze: true
-ratio_loss: multips
-estimator: ipw
-best_metric: val/ratio

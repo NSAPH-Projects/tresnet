@@ -1,0 +1,14 @@
+# @package _global_
+tr:
+  clever: true
+  tmle: true
+  consistency: 0.0
+  base_weight: 1.0
+treatment:
+  norm_weight: 0.0
+estimator: tr
+body:
+  independent_encoders: true
+training:
+  finetune:
+    freeze_nuisance: true

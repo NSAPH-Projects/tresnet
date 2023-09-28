@@ -1,0 +1,8 @@
+# @package _global_
+dataset:
+  _target_: tresnet.datamodules.TCGA
+  noise_scale: 0.1
+  data_opts:
+    dosage_variant: 2
+training:
+  epochs: 200

@@ -1,0 +1,15 @@
+# @package _global_
+treatment:
+  loss: classifier
+  norm_weight: 0.0
+tr:
+  freeze: true
+  weight: 0.0
+training:
+  finetune:
+    freeze_nuisance: false
+    after: 1.0  # never
+body:
+  independent_encoders: true
+estimator: aipw
+# best_metric: val/ratio

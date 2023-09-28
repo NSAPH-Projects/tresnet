@@ -1,0 +1,11 @@
+# @package _global_
+tr:
+  clever: true
+  consistency: 0.0
+estimator: tr
+treatment:
+  norm_weight: 0.0
+training:
+  finetune:
+    freeze_nuisance: true
+    after: 0.8

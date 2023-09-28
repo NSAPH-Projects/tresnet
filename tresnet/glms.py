@@ -73,6 +73,10 @@ class Gaussian(GLMFamily):
     def loss(
         self, linear_predictor: Tensor, target: Tensor, reduction: str = "none"
     ) -> Tensor:
+        if linear_predictor.shape[1] == 1 and target.shape[1] > 1:
+            linear_predictor = linear_predictor.repeat(1, target.shape[1])
+        elif target.shape[1] == 1 and linear_predictor.shape[1] > 1:
+            target = target.repeat(1, linear_predictor.shape[1])
         return F.mse_loss(linear_predictor, target, reduction=reduction)
 
     def sampler(self, generator: torch.Generator, noise_scale: float = 1.0) -> callable:
@@ -91,6 +95,10 @@ class Bernoulli(GLMFamily):
     def loss(
         self, linear_predictor: Tensor, target: Tensor, reduction: str = "none"
     ) -> Tensor:
+        if linear_predictor.shape[1] == 1 and target.shape[1] > 1:
+            linear_predictor = linear_predictor.repeat(1, target.shape[1])
+        elif target.shape[1] == 1 and linear_predictor.shape[1] > 1:
+            target = target.repeat(1, linear_predictor.shape[1])
         return F.binary_cross_entropy_with_logits(
             linear_predictor, target, reduction=reduction
         )
@@ -106,18 +114,31 @@ class Poisson(GLMFamily):
         super().__init__()
         self.off = offset
 
-
     def link(self, x: Tensor) -> Tensor:
-        return torch.exp(x + self.off)
+        return torch.exp((x + self.off).clamp(min=-7, max=10))
 
     def inverse_link(self, x: Tensor) -> Tensor:
-        return torch.log(x.clamp(1e-6)) - self.off
+        # y = torch.log(x + 1e-6)
+        # # revert symlog from link
+        # return torch.sign(y) * (torch.exp(torch.abs(y)) - 1) / 0.1
+        return torch.log(x + 1e-3) - self.off
 
     def loss(
-        self, linear_predictor: Tensor, target: Tensor, reduction: str = "none"
+        self,
+        linear_predictor: Tensor,
+        target: Tensor,
+        reduction: str = "none",
+        min=-7,
+        max=7,
     ) -> Tensor:
-        lp = linear_predictor + self.off
-        return F.poisson_nll_loss(lp, target, log_input=True, reduction=reduction, full=True)
+        if linear_predictor.shape[1] == 1 and target.shape[1] > 1:
+            linear_predictor = linear_predictor.repeat(1, target.shape[1])
+        elif target.shape[1] == 1 and linear_predictor.shape[1] > 1:
+            target = target.repeat(1, linear_predictor.shape[1])
+        lp = (linear_predictor + self.off).clamp(min=-7, max=10)
+        return F.poisson_nll_loss(
+            lp, target, log_input=True, reduction=reduction, full=True
+        )
 
     def sampler(self, generator: torch.Generator) -> callable:
         return lambda l: torch.poisson(torch.exp(l), generator=generator)

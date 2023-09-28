@@ -30,19 +30,20 @@ class SimB(TresnetDataModule, pl.LightningDataModule):
         x = torch.FloatTensor(x)
 
         beta = torch.FloatTensor(np.random.uniform(low=-1, high=1, size=n_confounders))
-        mu_t = np.sin(x @ beta)
+        logits = np.sin(x @ beta)
 
         # t is the treatment
-        t = torch.sigmoid(mu_t + self.noise_scale * torch.randn(n_samples))
+        logits = logits.mean() + (logits - logits.mean()) / logits.std()
+        t = torch.sigmoid(logits + self.noise_scale * torch.randn(n_samples))
 
-        self._beta = torch.randn(5)
-        self._gams = torch.randn(4)
-        self._treatment = t
-        self._covariates = x
+        self.__beta = torch.randn(5)
+        self.__gams = torch.randn(4)
+        self.treatment = t
+        self.covariates = x
 
     def linear_predictor(self, covariates: Tensor, treatment: Tensor) -> Tensor:
         x, t = covariates, treatment
-        beta, gams = self._beta, self._gams
+        beta, gams = self.__beta, self.__gams
         mu = hermit_polynomial(torch.logit(t), gams) + x @ beta
         return mu
 

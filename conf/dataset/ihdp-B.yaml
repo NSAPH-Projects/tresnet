@@ -1,0 +1,6 @@
+# @package _global_
+dataset:
+  _target_: tresnet.datamodules.IHDPB
+  noise_scale: 0.5
+training:
+  epochs: 500

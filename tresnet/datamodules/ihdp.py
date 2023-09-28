@@ -32,11 +32,11 @@ class IHDP(TresnetDataModule, pl.LightningDataModule):
             - 2.0
         )
         logits = logits + self.noise_scale * torch.randn(logits.shape)
-        self._treatment = torch.sigmoid(logits)
-        self._covariates = x
+        self.treatment = torch.sigmoid(logits)
+        self.covariates = x
 
     def linear_predictor(self, covariates: Tensor, treatment: Tensor) -> Tensor:
-        x1, x2, x3, x4, x5 = [self.covariates[:, j] for j in [0, 1, 2, 4, 5]]
+        x1, x2, x3, x4, x5 = [covariates[:, j] for j in [0, 1, 2, 4, 5]]
         t, x = treatment, covariates
         return (
             torch.sin(t * 3.0 * torch.pi)

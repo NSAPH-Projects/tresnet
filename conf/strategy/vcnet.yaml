@@ -1,0 +1,14 @@
+# @package _global_
+tr:
+  clever: true
+  type: erf
+  consistency: 0.0
+  spline_knots:
+    - 0.33
+    - 0.66
+treatment:
+  loss: ps
+  norm_weight: 0.0
+estimator: tr
+training:
+  tr_opt_freq: 1

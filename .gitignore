@@ -2,6 +2,8 @@
 # Logs
 lightning_logs
 logs
+.snakemake
+checkpoints/
 
 # Local ignores for Dimeji
 !dataset/tcga/create_synthetic_TCGA.ipynb
@@ -10,6 +12,7 @@ logs
 simu1/
 data/
 data_medicare/
+results.csv
 
 # Local for mauricio; just accept notebooks in this folder
 # !notebooks/*.ipynb
