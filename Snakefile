@@ -1,6 +1,10 @@
 assert len(config) > 0, "config must be specified with -configfile conf/snakemake.yaml"
 assert "experiment" in config, "experiment must be specified with -C experiment=..."
 
+
+configfile: "conf/snakemake.yaml"
+
+
 print(config)
 
 exp = config["experiment"]
