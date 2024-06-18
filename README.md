@@ -2,7 +2,14 @@
 
 This is the official PyTorch implementation of our paper:
 
-*Causal Shift-Response Functions with Neural Networks: The Health Benefits of Lowering Air Quality Standards in the US*. ICML 2023 submission.
+```bibtex
+@inproceedings{tec2023causal,
+  title={Causal Estimation of Exposure Shifts with Neural Networks},
+  author={Tec, Mauricio and Mudele, Oladimeji and Josey, Kevin and Dominici, Francesca},
+  booktitle={KDD},
+  year={2024}
+}
+```
 
 # Reproducing the paper results 
 
