@@ -1,5 +1,18 @@
 # TRESNET
 
+This is the official implementation of our paper
+
+```bibtex
+@inproceedings{tec2023causal,
+  title={Causal Estimation of Exposure Shifts with Neural Networks},
+  author={Tec, Mauricio and Mudele, Oladimeji and Josey, Kevin and Dominici, Francesca},
+  booktitle={KDD},
+  year={2024}
+}
+```
+
+### Experiments
+
 We use the [Snakemake](https://snakemake.readthedocs.io/en/stable/index.html) pipeline system for reproducibility. 
 
 The install the dependencies, run
